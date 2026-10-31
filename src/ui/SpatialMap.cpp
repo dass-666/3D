@@ -186,7 +186,8 @@ void SpatialMap::paint (juce::Graphics& g)
 
 void SpatialMap::mouseDown (const juce::MouseEvent& e)
 {
-    grabKeyboardFocus();
+    if (isShowing())
+        grabKeyboardFocus();
     const bool additive = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown();
     if (auto* p = hitTestPoint (e.position))
     {

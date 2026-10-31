@@ -11,6 +11,7 @@ add_executable(ses_tests
     TransportTests.cpp
     MultiPointTests.cpp
     EditorTests.cpp
+    PitchStutterTests.cpp
     EngineTests.cpp)
 
 target_link_libraries(ses_tests PRIVATE

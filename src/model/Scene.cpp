@@ -206,14 +206,89 @@ bool setSound (Scene& scene, const juce::String& id, SoundSettings s)
     return false;
 }
 
-bool setVolume (Scene& scene, const juce::String& id, double volumePercent)
+bool setGainDb (Scene& scene, const juce::String& id, double gainDb)
 {
     if (auto* p = findPoint (scene, id))
     {
-        p->volumePercent = std::clamp (volumePercent, limits::minVolume, limits::maxVolume);
+        p->gainDb = std::clamp (gainDb, limits::minGainDb, limits::maxGainDb);
         return true;
     }
     return false;
+}
+
+bool setStutter (Scene& scene, const juce::String& id, StutterSettings st)
+{
+    if (auto* p = findPoint (scene, id))
+    {
+        p->stutter = clamped (st);
+        return true;
+    }
+    return false;
+}
+
+double beatsPerDivision (StutterSettings::Division d)
+{
+    switch (d)
+    {
+        case StutterSettings::Division::Quarter:      return 1.0;
+        case StutterSettings::Division::Eighth:       return 0.5;
+        case StutterSettings::Division::Sixteenth:    return 0.25;
+        case StutterSettings::Division::ThirtySecond: return 0.125;
+    }
+    return 0.25;
+}
+
+juce::String toString (StutterSettings::Division d)
+{
+    switch (d)
+    {
+        case StutterSettings::Division::Quarter:      return "1/4";
+        case StutterSettings::Division::Eighth:       return "1/8";
+        case StutterSettings::Division::Sixteenth:    return "1/16";
+        case StutterSettings::Division::ThirtySecond: return "1/32";
+    }
+    return "1/16";
+}
+
+std::optional<StutterSettings::Division> stutterDivisionFromString (const juce::String& s)
+{
+    if (s == "1/4")  return StutterSettings::Division::Quarter;
+    if (s == "1/8")  return StutterSettings::Division::Eighth;
+    if (s == "1/16") return StutterSettings::Division::Sixteenth;
+    if (s == "1/32") return StutterSettings::Division::ThirtySecond;
+    return std::nullopt;
+}
+
+juce::String toString (StutterSettings::Region r)
+{
+    switch (r)
+    {
+        case StutterSettings::Region::Whole:  return "whole";
+        case StutterSettings::Region::Start:  return "start";
+        case StutterSettings::Region::End:    return "end";
+        case StutterSettings::Region::Manual: return "manual";
+    }
+    return "start";
+}
+
+std::optional<StutterSettings::Region> stutterRegionFromString (const juce::String& s)
+{
+    if (s == "whole")  return StutterSettings::Region::Whole;
+    if (s == "start")  return StutterSettings::Region::Start;
+    if (s == "end")    return StutterSettings::Region::End;
+    if (s == "manual") return StutterSettings::Region::Manual;
+    return std::nullopt;
+}
+
+StutterSettings clamped (StutterSettings s)
+{
+    s.manualStart = std::clamp (s.manualStart, 0.0, 1.0);
+    s.manualEnd = std::clamp (s.manualEnd, s.manualStart, 1.0);
+    s.repeats = std::clamp (s.repeats, limits::minStutterRepeats, limits::maxStutterRepeats);
+    s.sliceLengthPercent = std::clamp (s.sliceLengthPercent, 10.0, 100.0);
+    s.offsetBeats = std::clamp (s.offsetBeats, 0.0, limits::maxBeat);
+    s.gainDb = std::clamp (s.gainDb, limits::minGainDb, limits::maxGainDb);
+    return s;
 }
 
 int applyVoicePreset (Scene& scene, const std::vector<juce::String>& pointIds, const VoicePreset& preset)

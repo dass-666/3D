@@ -6,7 +6,7 @@
 namespace ses
 {
 
-Placement placementFor (const Point& p, double sampleRate)
+Placement placementFor (const Point& p, double sampleRate, double extraGainDb)
 {
     const auto pos = clamped (p.position);
     const double pan = std::clamp ((pos.x - 50.0) / 50.0, -1.0, 1.0);
@@ -20,7 +20,8 @@ Placement placementFor (const Point& p, double sampleRate)
     const double r = std::min (1.0, std::sqrt (2.0) * std::sin (theta));
 
     // Approximate depth: up to about -5 dB and a darker tone at the edge.
-    const double level = std::clamp (p.volumePercent, 0.0, 100.0) / 100.0 * (1.0 - 0.45 * depth);
+    const double gainDb = std::clamp (p.gainDb + extraGainDb, limits::minGainDb, limits::maxGainDb);
+    const double level = juce::Decibels::decibelsToGain (gainDb) * (1.0 - 0.45 * depth);
     double cutoff = 20000.0 * std::pow (0.2, depth) * (behind ? 1.0 - 0.35 * depth : 1.0);
 
     Placement out;
@@ -32,18 +33,35 @@ Placement placementFor (const Point& p, double sampleRate)
     return out;
 }
 
-const PlannedEcho* PlaybackPlan::find (juce::uint64 key) const noexcept
+const PlannedEcho* PlaybackPlan::find (juce::uint64 key, int index) const noexcept
 {
     for (auto& e : echoes)
-        if (e.key == key)
+        if (e.key == key && e.index == index)
             return &e;
     return nullptr;
+}
+
+bool PlaybackPlan::owns (const SampleBuffer* b) const noexcept
+{
+    if (b == nullptr)
+        return false;
+    if (b == sample.get())
+        return true;
+    for (auto& s : owned)
+        if (s.get() == b)
+            return true;
+    return false;
 }
 
 juce::uint64 keyForPoint (const juce::String& pointId)
 {
     const auto h = (juce::uint64) pointId.hashCode64();
     return h == 0 ? 1 : h;  // 0 is the fragment preview
+}
+
+int centsFor (double semitones) noexcept
+{
+    return (int) std::lround (std::clamp (semitones, limits::minPitch, limits::maxPitch) * 100.0);
 }
 
 SharedSample renderSample (const SourceRef& ref, const DecodedAudio* source, double hostSampleRate)
@@ -64,18 +82,90 @@ SharedSample renderSample (const SourceRef& ref, const DecodedAudio* source, dou
     return std::make_shared<const SampleBuffer> (resampled (trimmed, hostSampleRate));
 }
 
-std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample sample, double hostSampleRate)
+std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, const std::map<int, SharedSample>& pitched,
+                                         double hostSampleRate)
 {
     auto plan = std::make_unique<PlaybackPlan>();
     plan->sampleRate = hostSampleRate;
-    plan->sample = std::move (sample);
+    plan->sample = base;
     plan->gridBeats = beatsPerStep (scene.rhythm);
+    const auto length = base != nullptr ? (juce::int64) base->getNumSamples() : 0;
 
     const bool anySolo = std::any_of (scene.points.begin(), scene.points.end(),
                                       [] (const Point& p) { return p.enabled && p.solo; });
     for (auto& p : scene.points)
-        if (p.enabled && (! anySolo || p.solo))
-            plan->echoes.push_back ({ keyForPoint (p.id), clamped (p.timing).beat, placementFor (p, hostSampleRate) });
+    {
+        if (! p.enabled || (anySolo && ! p.solo))
+            continue;
+
+        SharedSample sample = base;
+        bool pitchPending = false;
+        const int cents = centsFor (p.sound.pitchSemitones);
+        if (cents != 0)
+        {
+            if (auto it = pitched.find (cents); it != pitched.end() && it->second != nullptr)
+                sample = it->second;
+            else
+            {
+                pitchPending = true;
+                ++plan->pendingPitchRenders;
+            }
+        }
+        if (sample != nullptr && ! plan->owns (sample.get()))
+            plan->owned.push_back (sample);
+
+        const auto key = keyForPoint (p.id);
+        const double pointBeat = clamped (p.timing).beat;
+        const auto len = sample != nullptr ? (juce::int64) sample->getNumSamples() : length;
+
+        if (! p.stutter.enabled)
+        {
+            PlannedEcho e;
+            e.key = key;
+            e.index = 0;
+            e.pointBeat = e.beat = pointBeat;
+            e.sample = sample;
+            e.pitchPending = pitchPending;
+            e.regionStart = 0;
+            e.regionEnd = len;
+            e.placement = placementFor (p, hostSampleRate);
+            plan->echoes.push_back (std::move (e));
+            continue;
+        }
+
+        const auto st = clamped (p.stutter);
+        const double div = beatsPerDivision (st.division);
+        juce::int64 regionStart = 0, regionEnd = len;
+        bool alignEnd = false;
+        switch (st.region)
+        {
+            case StutterSettings::Region::Whole:  break;
+            case StutterSettings::Region::Start:  break;
+            case StutterSettings::Region::End:    alignEnd = true; break;
+            case StutterSettings::Region::Manual:
+                regionStart = (juce::int64) std::llround (st.manualStart * (double) len);
+                regionEnd = std::max (regionStart + 1, (juce::int64) std::llround (st.manualEnd * (double) len));
+                regionEnd = std::min (regionEnd, len);
+                break;
+        }
+        const auto placement = placementFor (p, hostSampleRate, st.gainDb);
+        for (int k = 0; k < st.repeats; ++k)
+        {
+            PlannedEcho e;
+            e.key = key;
+            e.index = 1 + k;
+            e.pointBeat = pointBeat;
+            e.beat = pointBeat + st.offsetBeats + k * div;
+            e.sample = sample;
+            e.pitchPending = pitchPending;
+            e.regionStart = regionStart;
+            e.regionEnd = regionEnd;
+            e.sliceBeats = div * st.sliceLengthPercent / 100.0;
+            e.alignEnd = alignEnd;
+            e.placement = placement;
+            plan->echoes.push_back (std::move (e));
+        }
+    }
 
     return plan;
 }
@@ -85,7 +175,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, const DecodedAudio*
     auto sample = renderSample (scene.source, source, hostSampleRate);
     if (sample == nullptr)
         return nullptr;
-    return buildPlan (scene, std::move (sample), hostSampleRate);
+    return buildPlan (scene, std::move (sample), {}, hostSampleRate);
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +214,7 @@ int EchoEngine::numPendingEvents() const noexcept
     return (int) std::count_if (pending.begin(), pending.end(), [] (auto& p) { return p.active; });
 }
 
-void EchoEngine::addPending (double referenceBeat, juce::uint64 key) noexcept
+void EchoEngine::addPending (double referenceBeat, juce::uint64 key, int index) noexcept
 {
     auto slot = std::find_if (pending.begin(), pending.end(), [] (auto& p) { return ! p.active; });
     if (slot == pending.end())
@@ -132,51 +222,53 @@ void EchoEngine::addPending (double referenceBeat, juce::uint64 key) noexcept
         ++engineStats.dropped;  // queue full: drop rather than allocate
         return;
     }
-    *slot = { true, referenceBeat, key };
+    *slot = { true, referenceBeat, key, index };
 }
 
-void EchoEngine::schedule (const PlaybackPlan& plan, double referenceBeat) noexcept
+void EchoEngine::schedule (const PlaybackPlan& plan, double referenceBeat, juce::uint64 onlyKey) noexcept
 {
     for (auto& echo : plan.echoes)
     {
-        addPending (referenceBeat, echo.key);
+        if (onlyKey != 0 && echo.key != onlyKey)
+            continue;
+        addPending (referenceBeat, echo.key, echo.index);
         engineStats.lastScheduledBeat = std::max (engineStats.lastScheduledBeat, referenceBeat + echo.beat);
     }
 }
 
-bool EchoEngine::targetFor (const Voice& v, const PlaybackPlan& plan, Placement& out) const noexcept
+bool EchoEngine::startVoice (const PlannedEcho& echo, int offset, juce::AudioBuffer<float>& buffer, const PlaybackPlan& plan,
+                             double beatsPerSample) noexcept
 {
-    if (v.key == 0)
-    {
-        out = {};  // fragment preview: centred, unity, unfiltered
-        return true;
-    }
-    if (auto* e = plan.find (v.key))
-    {
-        out = e->placement;
-        return true;
-    }
-    return false;
-}
-
-bool EchoEngine::startVoice (juce::uint64 key, int offset, juce::AudioBuffer<float>& buffer, const PlaybackPlan& plan) noexcept
-{
-    if (plan.sample == nullptr)
+    if (echo.sample == nullptr)
         return false;
     auto slot = std::find_if (voices.begin(), voices.end(), [] (auto& v) { return ! v.active; });
     if (slot == voices.end())
         return false;  // all voices busy: drop rather than cut a sounding voice
 
+    const auto len = (juce::int64) echo.sample->getNumSamples();
+    auto regionStart = std::clamp<juce::int64> (echo.regionStart, 0, len);
+    auto regionEnd = std::clamp<juce::int64> (echo.regionEnd > 0 ? echo.regionEnd : len, regionStart, len);
+    if (echo.sliceBeats > 0.0 && beatsPerSample > 0.0)
+    {
+        const auto sliceSamples = std::max<juce::int64> (1, (juce::int64) std::llround (echo.sliceBeats / beatsPerSample));
+        if (echo.alignEnd)
+            regionStart = std::max (regionStart, regionEnd - sliceSamples);
+        else
+            regionEnd = std::min (regionEnd, regionStart + sliceSamples);
+    }
+    if (regionEnd <= regionStart)
+        return false;
+
     Voice v;
     v.active = true;
-    v.buffer = plan.sample.get();
-    v.key = key;
-    Placement target;
-    if (! targetFor (v, plan, target))
-        return false;
-    v.gainL = target.gainL;
-    v.gainR = target.gainR;
-    v.coef = target.lowpassCoef;
+    v.buffer = echo.sample.get();
+    v.key = echo.key;
+    v.index = echo.index;
+    v.start = v.position = regionStart;
+    v.end = regionEnd;
+    v.gainL = echo.placement.gainL;
+    v.gainR = echo.placement.gainR;
+    v.coef = echo.placement.lowpassCoef;
     *slot = v;
     renderVoice (*slot, buffer, offset, buffer.getNumSamples(), plan);
     return true;
@@ -189,22 +281,23 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
         return;
 
     // The buffer is only readable if the current plan still owns it.
-    if (v.buffer != plan.sample.get() && v.buffer != plan.previousSample.get())
+    if (! plan.owns (v.buffer))
     {
         v.active = false;
         return;
     }
 
-    Placement target;
-    const bool found = v.buffer == plan.sample.get() && targetFor (v, plan, target);
-    if (! found)
-    {
-        v.releasing = true;  // point removed/muted, or the fragment changed: fade out
-        target = { v.gainL, v.gainR, v.coef };
-    }
+    Placement target { v.gainL, v.gainR, v.coef };
+    const PlannedEcho* echo = v.key == 0 ? nullptr : plan.find (v.key, v.index);
+    if (v.key == 0)
+        target = {};  // fragment preview: centred, unity, unfiltered
+    else if (echo != nullptr && echo->sample.get() == v.buffer)
+        target = echo->placement;
+    else
+        v.releasing = true;  // point removed/muted, or its fragment/pitch changed: fade out
 
     const auto& s = *v.buffer;
-    const auto length = (juce::int64) s.getNumSamples();
+    const auto length = std::min<juce::int64> (v.end, s.getNumSamples());
     const int inChannels = s.getNumChannels();
     const int outChannels = buffer.getNumChannels();
     const float fadeDen = (float) (fadeSamples + 1);
@@ -222,7 +315,7 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
         }
 
         // Linear fade in/out of fadeSamples: first and last samples are near zero, never a step.
-        const float fadeIn = std::min (1.0f, (float) (v.position + 1) / fadeDen);
+        const float fadeIn = std::min (1.0f, (float) (v.position - v.start + 1) / fadeDen);
         const float fadeOut = std::min (1.0f, (float) (length - v.position) / fadeDen);
         if (v.releasing)
             v.release -= releaseStep;
@@ -265,8 +358,7 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
 }
 
 void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* plan, const TransportInfo& t,
-                          bool triggerRisingEdge, bool previewScene, float wetStart, float wetEnd,
-                          bool previewFragment) noexcept
+                          const EngineRequests& req, float wetStart, float wetEnd) noexcept
 {
     const int n = buffer.getNumSamples();
     wetA = wetStart;
@@ -316,7 +408,7 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
 
     if (plan != nullptr && plan->sample != nullptr)
     {
-        if (triggerRisingEdge)
+        if (req.triggerRisingEdge)
         {
             // While the host plays, align to the next rhythm step (an automation point at
             // a grid position lands exactly on it). When stopped there is no grid: start now.
@@ -329,14 +421,26 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
             ++engineStats.references;
             schedule (*plan, ref);
         }
-        if (previewScene)
+        if (req.previewScene)
         {
             engineStats.lastReferenceBeat = blockStart;
             ++engineStats.references;
             schedule (*plan, blockStart);
         }
-        if (previewFragment)
-            addPending (blockStart, 0);
+        if (req.triggerPoint != 0)
+        {
+            // Play this point now: shift the reference so its own moment lands on this block.
+            double pointBeat = 0.0;
+            for (auto& e : plan->echoes)
+                if (e.key == req.triggerPoint)
+                {
+                    pointBeat = e.pointBeat;
+                    break;
+                }
+            schedule (*plan, blockStart - pointBeat, req.triggerPoint);
+        }
+        if (req.previewFragment)
+            addPending (blockStart, 0, 0);
     }
 
     for (auto& v : voices)
@@ -351,28 +455,31 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
 
     if (plan != nullptr)
     {
+        PlannedEcho preview;  // fragment preview: whole base sample, centred
+        preview.sample = plan->sample;
+        preview.regionEnd = plan->sample != nullptr ? plan->sample->getNumSamples() : 0;
+
         for (auto& p : pending)
         {
             if (! p.active)
                 continue;
-            double beat = 0.0;
+            const PlannedEcho* echo = &preview;
             if (p.key != 0)
             {
-                auto* echo = plan->find (p.key);
+                echo = plan->find (p.key, p.index);
                 if (echo == nullptr)
                 {
-                    p.active = false;  // point removed or muted before it played
+                    p.active = false;  // point removed, muted or re-shaped before it played
                     continue;
                 }
-                beat = echo->beat;
             }
-            const double startBeat = p.referenceBeat + beat;
+            const double startBeat = p.referenceBeat + echo->beat;
             const double offset = (startBeat - blockStart) / beatsPerSample;
             if (offset < -0.5)
             {
                 // The host moved slightly past it (jitter): play it now rather than lose it.
                 p.active = false;
-                if ((blockStart - startBeat) <= toleranceBeats && startVoice (p.key, 0, buffer, *plan))
+                if ((blockStart - startBeat) <= toleranceBeats && startVoice (*echo, 0, buffer, *plan, beatsPerSample))
                 {
                     ++engineStats.fired;
                     ++engineStats.firedLate;
@@ -388,7 +495,7 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
             if (startSample < n)
             {
                 p.active = false;
-                if (startVoice (p.key, startSample, buffer, *plan))
+                if (startVoice (*echo, startSample, buffer, *plan, beatsPerSample))
                 {
                     ++engineStats.fired;
                     engineStats.lastFiredBeat = blockStart + startSample * beatsPerSample;

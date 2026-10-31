@@ -67,7 +67,8 @@ namespace limits
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
     inline constexpr double minCharacter = 0.0, maxCharacter = 100.0;
     inline constexpr double minSpeed = 50.0, maxSpeed = 200.0;
-    inline constexpr double minVolume = 0.0, maxVolume = 100.0;
+    inline constexpr double minGainDb = -36.0, maxGainDb = 12.0;
+    inline constexpr int minStutterRepeats = 2, maxStutterRepeats = 32;
     inline constexpr double minMix = 0.0, maxMix = 100.0;
     inline constexpr int minMaxPoints = 1, maxMaxPoints = 64;  // format allows growth beyond 16
 }
@@ -86,6 +87,32 @@ struct VoiceRef
     bool operator== (const VoiceRef&) const = default;
 };
 
+// Stutter / beat repeat: the repetition is cut into `repeats` short slices
+// played one per `division` step, starting `offsetBeats` into the point's
+// moment. Acceleration is deliberately not implemented yet.
+struct StutterSettings
+{
+    enum class Region { Whole, Start, End, Manual };
+    enum class Division { Quarter, Eighth, Sixteenth, ThirtySecond };
+
+    bool enabled = false;
+    Region region = Region::Start;
+    double manualStart = 0.0, manualEnd = 1.0;  // 0..1 of the fragment (Manual region)
+    int repeats = 8;                            // 2..32
+    Division division = Division::Sixteenth;
+    double sliceLengthPercent = 100.0;          // 10..100 % of one division step
+    double offsetBeats = 0.0;                   // where the effect starts inside the repetition (>= 0)
+    double gainDb = 0.0;                        // -36..+12, on top of the point gain
+    bool operator== (const StutterSettings&) const = default;
+};
+
+double beatsPerDivision (StutterSettings::Division);
+juce::String toString (StutterSettings::Division);
+std::optional<StutterSettings::Division> stutterDivisionFromString (const juce::String&);
+juce::String toString (StutterSettings::Region);
+std::optional<StutterSettings::Region> stutterRegionFromString (const juce::String&);
+StutterSettings clamped (StutterSettings);
+
 struct Point
 {
     juce::String id;     // stable identity: never reused, independent of number and timing
@@ -96,7 +123,8 @@ struct Point
     Timing timing;
     VoiceRef voice;
     SoundSettings sound;
-    double volumePercent = 100.0;  // 0..100, 100 = unity gain
+    double gainDb = 0.0;           // -36..+12 dB, independent of pitch and of the global Output
+    StutterSettings stutter;
     bool operator== (const Point&) const = default;
 };
 
@@ -168,7 +196,8 @@ std::optional<juce::String> duplicatePoint (Scene&, const juce::String& id);
 bool movePoint (Scene&, const juce::String& id, Position);
 bool setTiming (Scene&, const juce::String& id, Timing);
 bool setSound (Scene&, const juce::String& id, SoundSettings);  // marks voice as modified
-bool setVolume (Scene&, const juce::String& id, double volumePercent);
+bool setGainDb (Scene&, const juce::String& id, double gainDb);
+bool setStutter (Scene&, const juce::String& id, StutterSettings);
 
 // Copies the preset's sound into every listed point. Position, timing,
 // volume, number and id are never touched. Returns how many points changed.

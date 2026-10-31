@@ -21,7 +21,12 @@ PlaybackPlan plan1 (double sr, double beat)
         buf->setSample (0, i, 0.5f);
     p.sample = buf;
     p.gridBeats = 1.0;
-    p.echoes.push_back ({ 1, beat, {} });
+    PlannedEcho e;
+    e.key = 1;
+    e.pointBeat = e.beat = beat;
+    e.sample = buf;
+    e.regionEnd = 2000;
+    p.echoes.push_back (e);
     return p;
 }
 

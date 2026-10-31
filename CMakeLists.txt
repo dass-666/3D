@@ -41,6 +41,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/Serialization.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/DemoScene.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/SourceAudio.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/PitchRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Theme.cpp
@@ -53,6 +54,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Diagnostics.cpp)
 target_include_directories(ses_shared INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(ses_shared SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch)
 target_compile_definitions(ses_shared INTERFACE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(ses_shared INTERFACE

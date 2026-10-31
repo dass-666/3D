@@ -1,12 +1,13 @@
 #pragma once
 
 // Audio-thread engine: schedules repetitions on the musical timeline and plays
-// them from a pre-rendered sample. No locks, no allocation in process().
+// them from pre-rendered samples. No locks, no allocation in process().
 //
-// B3: several independent repetitions (one per enabled point), each with its
-// own moment, level, stereo pan and approximate depth. Voices follow live
-// edits of their point (matched by a stable key), so dragging a point while it
-// sounds moves it smoothly instead of cutting it.
+// Each enabled point becomes one or more PlannedEchos: a single full
+// repetition, or (Stutter) a run of short slices. Voices follow live edits of
+// their point (matched by a stable key + slice index), so dragging a point
+// while it sounds moves it smoothly instead of cutting it. Pitch is applied
+// by playing a pre-rendered pitched copy of the fragment (see PitchRenderer).
 
 #include "audio/SourceAudio.h"
 #include "model/Scene.h"
@@ -14,6 +15,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 
@@ -28,16 +30,25 @@ using SharedSample = std::shared_ptr<const SampleBuffer>;
 // behind = a little darker still). This is NOT 3D/binaural localisation.
 struct Placement
 {
-    float gainL = 1.0f, gainR = 1.0f;  // includes point volume and depth attenuation
+    float gainL = 1.0f, gainR = 1.0f;  // includes point gain and depth attenuation
     float lowpassCoef = 1.0f;          // one-pole coefficient, 1 = no filtering
 };
 
-Placement placementFor (const Point&, double sampleRate);
+Placement placementFor (const Point&, double sampleRate, double extraGainDb = 0.0);
 
 struct PlannedEcho
 {
     juce::uint64 key = 0;     // stable per point (hash of its id); 0 is reserved for the fragment preview
-    double beat = 0.0;        // quarter notes after the (grid-aligned) trigger
+    int index = 0;            // 0 = the repetition, 1.. = stutter slices
+    double pointBeat = 0.0;   // the point's moment (quarter notes after the trigger)
+    double beat = 0.0;        // when this echo starts (>= pointBeat)
+    SharedSample sample;      // buffer to play (base or pitched copy)
+    bool pitchPending = false;  // true while the pitched copy is still rendering (base plays instead)
+    // Slice of `sample` to play, in samples. sliceBeats > 0 limits the length
+    // to that many beats at the tempo in force; alignEnd takes it from regionEnd backwards.
+    juce::int64 regionStart = 0, regionEnd = 0;
+    double sliceBeats = 0.0;
+    bool alignEnd = false;
     Placement placement;
 };
 
@@ -46,24 +57,35 @@ struct PlannedEcho
 struct PlaybackPlan
 {
     double sampleRate = 0.0;
-    SharedSample sample;          // trimmed fragment, 1 or 2 channels; may be null
-    SharedSample previousSample;  // kept alive briefly so voices on it can fade out
-    double gridBeats = 1.0;       // rhythm step used to align triggers
+    SharedSample sample;                 // base fragment (unpitched); may be null
+    std::vector<SharedSample> owned;     // every buffer a voice may still be reading (incl. recently replaced ones)
+    double gridBeats = 1.0;              // rhythm step used to align triggers
     std::vector<PlannedEcho> echoes;
+    int pendingPitchRenders = 0;
 
-    const PlannedEcho* find (juce::uint64 key) const noexcept;
+    const PlannedEcho* find (juce::uint64 key, int index) const noexcept;
+    const PlannedEcho* find (juce::uint64 key) const noexcept { return find (key, 0); }
+    bool owns (const SampleBuffer*) const noexcept;
 };
 
 juce::uint64 keyForPoint (const juce::String& pointId);
+int centsFor (double semitones) noexcept;  // cache key for pitched renders
 
 // Message thread. Trims (source samples) and resamples to the host rate.
 SharedSample renderSample (const SourceRef&, const DecodedAudio* source, double hostSampleRate);
 
-// Message thread. One echo per enabled point; if any enabled point is soloed,
-// only soloed points play.
-std::unique_ptr<PlaybackPlan> buildPlan (const Scene&, SharedSample sample, double hostSampleRate);
+// Message thread. One or more echoes per enabled point; if any enabled point
+// is soloed, only soloed points play. `pitched` maps centsFor(semitones) to a
+// rendered copy; a missing entry plays the base and is counted as pending.
+std::unique_ptr<PlaybackPlan> buildPlan (const Scene&, SharedSample base, const std::map<int, SharedSample>& pitched,
+                                         double hostSampleRate);
 
-// Convenience (tests): render + build. Null when there is no audio.
+inline std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, double hostSampleRate)
+{
+    return buildPlan (scene, std::move (base), {}, hostSampleRate);
+}
+
+// Convenience (tests, no pitch): render + build. Null when there is no audio.
 std::unique_ptr<PlaybackPlan> buildPlan (const Scene&, const DecodedAudio* source, double hostSampleRate);
 
 struct TransportInfo
@@ -78,7 +100,7 @@ struct TransportInfo
 struct EngineStats
 {
     int triggers = 0;          // trigger edges accepted
-    int fired = 0;             // repetitions started
+    int fired = 0;             // echoes started
     int firedLate = 0;         // started late (host skipped a little past them)
     int dropped = 0;           // pending events dropped (too late, queue or voices full)
     int jumps = 0;             // transport relocations detected
@@ -91,11 +113,19 @@ struct EngineStats
     bool ppqDerivedFromSamples = false;
 };
 
+struct EngineRequests
+{
+    bool triggerRisingEdge = false;  // all points, aligned to the grid while the host plays
+    bool previewScene = false;       // all points, now
+    bool previewFragment = false;    // the fragment once, centred, unity, now
+    juce::uint64 triggerPoint = 0;   // one point (by key), now, with its own settings
+};
+
 class EchoEngine
 {
 public:
-    static constexpr int kMaxVoices = 32;
-    static constexpr int kMaxPending = 64;
+    static constexpr int kMaxVoices = 64;
+    static constexpr int kMaxPending = 16 * (1 + 32) + 16;
     static constexpr double kFallbackBpm = 120.0;
     static constexpr double kFadeSeconds = 0.002;
     static constexpr double kReleaseSeconds = 0.01;  // fade when a point is removed/muted while sounding
@@ -108,11 +138,16 @@ public:
 
     // Adds the repetitions to `buffer` (dry signal untouched). The wet level
     // (Mix) ramps linearly from wetStart to wetEnd across the block.
-    // previewScene: play all points now (internal timing). previewFragment:
-    // play the selected fragment once, centred, at unity gain.
     void process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* plan, const TransportInfo&,
+                  const EngineRequests&, float wetStart, float wetEnd) noexcept;
+
+    // Older signature kept for the existing tests.
+    void process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* plan, const TransportInfo& t,
                   bool triggerRisingEdge, bool previewScene, float wetStart, float wetEnd,
-                  bool previewFragment = false) noexcept;
+                  bool previewFragment = false) noexcept
+    {
+        process (buffer, plan, t, EngineRequests { triggerRisingEdge, previewScene, previewFragment, 0 }, wetStart, wetEnd);
+    }
 
     int numActiveVoices() const noexcept;
     // Keys of the sounding voices (0 = fragment preview), for UI feedback.
@@ -131,9 +166,10 @@ private:
     struct Voice
     {
         bool active = false;
-        const SampleBuffer* buffer = nullptr;  // compared by address; read only while a plan owns it
-        juce::int64 position = 0;
+        const SampleBuffer* buffer = nullptr;  // compared by address; read only while the plan owns it
+        juce::int64 position = 0, start = 0, end = 0;
         juce::uint64 key = 0;
+        int index = 0;
         float gainL = 0.0f, gainR = 0.0f, coef = 1.0f;
         float z[2] {};                 // lowpass state
         float release = 1.0f;          // < 1 while fading out
@@ -143,16 +179,17 @@ private:
     struct Pending
     {
         bool active = false;
-        double referenceBeat = 0.0;    // trigger moment; the point's beat is looked up live
+        double referenceBeat = 0.0;    // trigger moment; the echo's beat is looked up live
         juce::uint64 key = 0;
+        int index = 0;
     };
 
-    void schedule (const PlaybackPlan&, double referenceBeat) noexcept;
-    void addPending (double referenceBeat, juce::uint64 key) noexcept;
-    bool startVoice (juce::uint64 key, int offsetInBlock, juce::AudioBuffer<float>&, const PlaybackPlan&) noexcept;
+    void schedule (const PlaybackPlan&, double referenceBeat, juce::uint64 onlyKey = 0) noexcept;
+    void addPending (double referenceBeat, juce::uint64 key, int index) noexcept;
+    bool startVoice (const PlannedEcho&, int offsetInBlock, juce::AudioBuffer<float>&, const PlaybackPlan&,
+                     double beatsPerSample) noexcept;
     void renderVoice (Voice&, juce::AudioBuffer<float>&, int start, int end, const PlaybackPlan&) noexcept;
     void cancelPending() noexcept;
-    bool targetFor (const Voice&, const PlaybackPlan&, Placement&) const noexcept;
 
     double sampleRate = 44100.0;
     int fadeSamples = 88;

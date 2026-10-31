@@ -17,12 +17,12 @@ TEST_CASE ("Demo scene matches the agreed specification")
     CHECK (scene.mixPercent == 70.0);
     CHECK (scene.spatialMode == SpatialMode::Stereo);
 
-    struct Expected { int number; double x, y; juce::String preset; double pitch, character, speed, volume, beat; };
+    struct Expected { int number; double x, y; juce::String preset; double pitch, character, speed, gainDb, beat; };
     const Expected expected[] {
-        { 1, 18, 49, presetIds::original, 0, 0, 100, 100, 1 },
-        { 2, 82, 49, presetIds::agudo, 7, 25, 100, 85, 2 },
-        { 3, 50, 18, presetIds::monster, -7, 40, 100, 90, 3 },
-        { 4, 50, 83, presetIds::grave, -5, 25, 100, 75, 4 },
+        { 1, 18, 49, presetIds::original, 0, 0, 100, 0.0, 1 },
+        { 2, 82, 49, presetIds::agudo, 7, 25, 100, -1.5, 2 },
+        { 3, 50, 18, presetIds::monster, -7, 40, 100, -1.0, 3 },
+        { 4, 50, 83, presetIds::grave, -5, 25, 100, -2.5, 4 },
     };
 
     for (size_t i = 0; i < 4; ++i)
@@ -33,7 +33,7 @@ TEST_CASE ("Demo scene matches the agreed specification")
         CHECK (p.position == Position { e.x, e.y });
         CHECK (p.voice.presetId == e.preset);
         CHECK (p.sound == SoundSettings { e.pitch, e.character, e.speed });
-        CHECK (p.volumePercent == e.volume);
+        CHECK (p.gainDb == e.gainDb);
         CHECK (p.timing.beat == e.beat);
     }
 }
@@ -104,7 +104,7 @@ TEST_CASE ("Applying a preset to several points changes only their sound")
         CHECK (p.number == b.number);
         CHECK (p.position == b.position);
         CHECK (p.timing == b.timing);
-        CHECK (p.volumePercent == b.volumePercent);
+        CHECK (p.gainDb == b.gainDb);
 
         if (i == 0 || i == 2)
         {
@@ -132,8 +132,8 @@ TEST_CASE ("Editing a point's sound marks it as modified, values are clamped")
 
     REQUIRE (movePoint (scene, id, { -10, 250 }));
     CHECK (p->position == Position { 0, 100 });
-    REQUIRE (setVolume (scene, id, 140));
-    CHECK (p->volumePercent == 100.0);
+    REQUIRE (setGainDb (scene, id, 40));
+    CHECK (p->gainDb == 12.0);
 }
 
 TEST_CASE ("Duplicate creates a new identity one step later")

@@ -1,6 +1,7 @@
 #include "model/Serialization.h"
 
 #include <algorithm>
+#include <cmath>
 #include <set>
 
 namespace ses
@@ -70,7 +71,19 @@ var pointToVar (const Point& p)
     set (o, "voice", voice);
 
     set (o, "sound", soundToVar (p.sound));
-    set (o, "volumePercent", p.volumePercent);
+    set (o, "gainDb", p.gainDb);
+
+    auto st = obj();
+    set (st, "enabled", p.stutter.enabled);
+    set (st, "region", toString (p.stutter.region));
+    set (st, "manualStart", p.stutter.manualStart);
+    set (st, "manualEnd", p.stutter.manualEnd);
+    set (st, "repeats", p.stutter.repeats);
+    set (st, "division", toString (p.stutter.division));
+    set (st, "sliceLengthPercent", p.stutter.sliceLengthPercent);
+    set (st, "offsetBeats", p.stutter.offsetBeats);
+    set (st, "gainDb", p.stutter.gainDb);
+    set (o, "stutter", st);
     return o;
 }
 
@@ -200,7 +213,37 @@ struct Reader
         p.voice.modified = flag (voice, "modified", false);
 
         p.sound = sound (o.getProperty ("sound", var()), where + ".sound");
-        p.volumePercent = number (o, "volumePercent", 100.0, limits::minVolume, limits::maxVolume, where);
+        if (o.hasProperty ("gainDb"))
+            p.gainDb = number (o, "gainDb", 0.0, limits::minGainDb, limits::maxGainDb, where);
+        else
+        {
+            // Scenes written before B4 stored a 0..100 % volume.
+            const double pct = number (o, "volumePercent", 100.0, 0.0, 100.0, where);
+            p.gainDb = pct <= 0.0 ? limits::minGainDb
+                                  : std::clamp (20.0 * std::log10 (pct / 100.0), limits::minGainDb, limits::maxGainDb);
+        }
+
+        const auto st = o.getProperty ("stutter", var());
+        if (st.isObject())
+        {
+            StutterSettings x;
+            x.enabled = flag (st, "enabled", false);
+            if (auto r = stutterRegionFromString (text (st, "region", "start")))
+                x.region = *r;
+            else
+                warnings.add (where + ".stutter.region: unknown, using start");
+            x.manualStart = number (st, "manualStart", 0.0, 0.0, 1.0, where + ".stutter");
+            x.manualEnd = number (st, "manualEnd", 1.0, 0.0, 1.0, where + ".stutter");
+            x.repeats = (int) integer (st, "repeats", 8, limits::minStutterRepeats, limits::maxStutterRepeats, where + ".stutter");
+            if (auto d = stutterDivisionFromString (text (st, "division", "1/16")))
+                x.division = *d;
+            else
+                warnings.add (where + ".stutter.division: unknown, using 1/16");
+            x.sliceLengthPercent = number (st, "sliceLengthPercent", 100.0, 10.0, 100.0, where + ".stutter");
+            x.offsetBeats = number (st, "offsetBeats", 0.0, 0.0, limits::maxBeat, where + ".stutter");
+            x.gainDb = number (st, "gainDb", 0.0, limits::minGainDb, limits::maxGainDb, where + ".stutter");
+            p.stutter = clamped (x);
+        }
         return p;
     }
 

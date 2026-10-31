@@ -175,7 +175,7 @@ TEST_CASE ("Changing the fragment fades out voices of the old one instead of cut
     auto planA = buildPlan (scene, oldSample, 48000.0);
     run.run (planA.get(), 10, true);
     auto planB = buildPlan (scene, constSample (1, 48000, 0.2f), 48000.0);
-    planB->previousSample = oldSample;
+    planB->owned.push_back (oldSample);
     auto [l, r] = run.run (planB.get(), 4, false);
     CHECK (maxStep (l) < 0.5f / 400.0f);
     CHECK (run.e.numActiveVoices() == 0);

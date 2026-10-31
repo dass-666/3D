@@ -4,6 +4,9 @@
 #include "model/Serialization.h"
 #include "ui/PluginEditor.h"
 
+#include <algorithm>
+#include <set>
+
 namespace ses
 {
 namespace
@@ -39,6 +42,7 @@ SpatialEchoProcessor::SpatialEchoProcessor()
     bypassValue = parameters.getRawParameterValue (params::bypass);
     protectValue = parameters.getRawParameterValue (params::protect);
     diagnostics.log (juce::String ("plugin created (") + juce::PluginHostType().getHostDescription() + ")");
+    pitchRenderer.onRenderFinished = [this] { rebuildPlan(); };
 }
 
 SpatialEchoProcessor::~SpatialEchoProcessor() = default;
@@ -120,8 +124,14 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     wetLevel.skip (n);
     const float wetEnd = wetLevel.getCurrentValue();
 
+    EngineRequests req;
+    req.triggerRisingEdge = rising;
+    req.previewScene = preview;
+    req.previewFragment = fragment;
+    req.triggerPoint = pointTrigger.exchange (0);
+
     const auto* plan = plans.acquire();
-    engine.process (buffer, plan, transport, rising, preview, wetStart, wetEnd, fragment);
+    engine.process (buffer, plan, transport, req, wetStart, wetEnd);
     plans.release();
     currentBeat.store (engine.currentBeat());
 
@@ -257,21 +267,33 @@ void SpatialEchoProcessor::rebuildPlan()
     const auto now = juce::Time::getMillisecondCounter();
     if (needRender)
     {
-        previousSample = renderedSample;  // voices still reading it fade out instead of stopping dead
         renderedSample = renderSample (scene.source, src.get(), rate);
         renderedFrom = src.get();
         renderedTrimStart = scene.source.trimStart;
         renderedTrimEnd = scene.source.trimEnd;
         renderedRate = rate;
-        sampleChangedAtMs = now;
-    }
-    else if (previousSample != nullptr && now - sampleChangedAtMs > 2000)
-    {
-        previousSample.reset();  // fade-outs take 10 ms; free the memory
+        pitchRenderer.setBase (renderedSample, rate);
     }
 
-    auto plan = buildPlan (scene, renderedSample, rate);
-    plan->previousSample = previousSample;
+    std::set<int> cents;
+    for (auto& p : scene.points)
+        cents.insert (centsFor (p.sound.pitchSemitones));
+    pitchRenderer.request (cents);
+
+    auto plan = buildPlan (scene, renderedSample, pitchRenderer.ready(), rate);
+
+    // Buffers that were in use last time but not now stay readable for 2 s so
+    // voices on them fade out instead of stopping dead.
+    for (auto& old : lastOwned)
+        if (! plan->owns (old.get()) && std::none_of (retiring.begin(), retiring.end(), [&] (auto& r) { return r.first == old; }))
+            retiring.push_back ({ old, now });
+    std::erase_if (retiring, [&] (auto& r) { return now - r.second > 2000 || plan->owns (r.first.get()); });
+    for (auto& r : retiring)
+        plan->owned.push_back (r.first);
+    lastOwned = plan->owned;
+    if (plan->sample != nullptr && std::find (lastOwned.begin(), lastOwned.end(), plan->sample) == lastOwned.end())
+        lastOwned.push_back (plan->sample);
+
     plans.publish (std::move (plan));
 }
 

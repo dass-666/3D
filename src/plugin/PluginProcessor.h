@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/EchoEngine.h"
+#include "audio/PitchRenderer.h"
 #include "audio/PlanExchange.h"
 #include "audio/SafetyLimiter.h"
 #include "audio/SourceAudio.h"
@@ -90,6 +91,7 @@ public:
     std::shared_ptr<const DecodedAudio> getSourceAudio() const;
 
     void requestPreview() noexcept { previewRequested.store (true); }          // all points, now
+    void requestTriggerPoint (const juce::String& pointId) noexcept { pointTrigger.store (keyForPoint (pointId)); }
     void requestFragmentPreview() noexcept { fragmentRequested.store (true); } // the fragment once, centred
     // Momentary trigger from the UI: same as an off->on edge of the Trigger
     // parameter, but a click can never be "used up" by leaving the toggle on.
@@ -98,6 +100,12 @@ public:
     const HostSnapshot& getHostSnapshot() const noexcept { return hostSnapshot; }
     DiagnosticLog& getDiagnostics() noexcept { return diagnostics; }
     double getCurrentBeat() const noexcept { return currentBeat.load(); }
+
+    void refreshPlan() { rebuildPlan(); }  // message thread
+
+    // Pitch pre-rendering status (message thread).
+    int numPendingPitchRenders() const { return pitchRenderer.numPending(); }
+    bool isPitchPending (const Point& p) const { return pitchRenderer.isPending (centsFor (p.sound.pitchSemitones)); }
 
     UiMode getUiMode() const noexcept { return uiMode.load(); }
     void setUiMode (UiMode m) noexcept { uiMode.store (m); }
@@ -112,6 +120,8 @@ private:
     PlanExchange<PlaybackPlan> plans;
     std::atomic<double> hostSampleRate { 44100.0 };
     std::atomic<bool> previewRequested { false }, fragmentRequested { false }, triggerRequested { false };
+    std::atomic<juce::uint64> pointTrigger { 0 };
+    PitchRenderer pitchRenderer;
     std::atomic<double> currentBeat { 0.0 };
     std::atomic<UiMode> uiMode { UiMode::Easy };
     bool lastTrigger = false;
@@ -140,11 +150,12 @@ private:
 
     // Rendered fragment cache (message thread, guarded by planLock).
     juce::CriticalSection planLock;
-    SharedSample renderedSample, previousSample;
+    SharedSample renderedSample;
+    std::vector<std::pair<SharedSample, juce::uint32>> retiring;  // replaced buffers, kept 2 s so voices fade out
+    std::vector<SharedSample> lastOwned;
     const DecodedAudio* renderedFrom = nullptr;
     juce::int64 renderedTrimStart = -1, renderedTrimEnd = -1;
     double renderedRate = 0.0;
-    juce::uint32 sampleChangedAtMs = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpatialEchoProcessor)
 };

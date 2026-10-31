@@ -41,7 +41,13 @@ PlaybackPlan makePlan (double sr, int length, double beat, double grid = 1.0, fl
     p.sampleRate = sr;
     p.sample = std::make_shared<const SampleBuffer> (constant (channels, length, 0.5f));
     p.gridBeats = grid;
-    p.echoes.push_back ({ 1, beat, { gain, gain, 1.0f } });
+    PlannedEcho e;
+    e.key = 1;
+    e.pointBeat = e.beat = beat;
+    e.sample = p.sample;
+    e.regionEnd = length;
+    e.placement = { gain, gain, 1.0f };
+    p.echoes.push_back (e);
     return p;
 }
 
@@ -241,6 +247,7 @@ TEST_CASE ("Stereo fragment keeps its channels; mono output gets the average")
         auto copy = std::make_shared<SampleBuffer> (*plan.sample);
         copy->applyGain (1, 0, 2000, 0.0f);  // right channel silent
         plan.sample = copy;
+        plan.echoes[0].sample = copy;
     }
 
     juce::AudioBuffer<float> stereo (2, 1024);
@@ -305,7 +312,7 @@ TEST_CASE ("Plan: one echo per enabled point, solo, placement and the scene trim
     REQUIRE (p2 != nullptr);
     CHECK (p2->beat == 2.0);
     CHECK (p2->placement.gainR > p2->placement.gainL);
-    CHECK (p2->placement.gainR <= 0.85f);
+    CHECK (p2->placement.gainR <= juce::Decibels::decibelsToGain (-1.5f) + 1e-6f);
 
     scene.points[2].solo = true;
     plan = buildPlan (scene, &src, 48000.0);

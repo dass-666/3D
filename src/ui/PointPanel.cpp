@@ -41,12 +41,12 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     presetNote.setColour (juce::Label::textColourId, theme::amber);
     addAndMakeVisible (presetNote);
 
-    setupSlider (volume, volumeL, "Volumen", 0, 100, 1, " %");
+    setupSlider (volume, volumeL, "Ganancia", -36, 12, 0.1, " dB");
     setupSlider (posX, posXL, u8 ("Izq \xe2\x86\x94 Der"), 0, 100, 0.1, "");
     setupSlider (posY, posYL, u8 ("Delante \xe2\x86\x94 Detr\xc3\xa1s"), 0, 100, 0.1, "");
     setupSlider (beat, beatL, "Momento", 0, 32, 0.25, " t");
 
-    volume.onValueChange = [this] { editPrimary ([v = volume.getValue()] (Scene& s, Point& p) { setVolume (s, p.id, v); }); };
+    volume.onValueChange = [this] { editPrimary ([v = volume.getValue()] (Scene& s, Point& p) { setGainDb (s, p.id, v); }); };
     posX.onValueChange = [this] { editPrimary ([v = posX.getValue()] (Scene& s, Point& p) { movePoint (s, p.id, { v, p.position.y }); }); };
     posY.onValueChange = [this] { editPrimary ([v = posY.getValue()] (Scene& s, Point& p) { movePoint (s, p.id, { p.position.x, v }); }); };
     beat.onValueChange = [this] { editPrimary ([v = beat.getValue()] (Scene& s, Point& p) { setTiming (s, p.id, { v }); }); };
@@ -168,7 +168,7 @@ void PointPanel::refresh()
         if (! s.isMouseButtonDown())
             s.setValue (v, juce::dontSendNotification);
     };
-    setIfIdle (volume, p->volumePercent);
+    setIfIdle (volume, p->gainDb);
     setIfIdle (posX, p->position.x);
     setIfIdle (posY, p->position.y);
     setIfIdle (beat, p->timing.beat);

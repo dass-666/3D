@@ -1,0 +1,2 @@
+Signalsmith Stretch 1.4.0 (MIT) - https://github.com/Signalsmith-Audio/signalsmith-stretch
+Signalsmith Linear 0.6.4 (MIT) - https://github.com/Signalsmith-Audio/linear (headers only, no platform-specific FFT enabled)
