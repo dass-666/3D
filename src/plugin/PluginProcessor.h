@@ -1,5 +1,8 @@
 #pragma once
 
+#include "audio/EchoEngine.h"
+#include "audio/PlanExchange.h"
+#include "audio/SourceAudio.h"
 #include "model/Scene.h"
 #include "plugin/Parameters.h"
 
@@ -8,16 +11,16 @@
 namespace ses
 {
 
-// B0: passes audio through with a smoothed output gain. Holds the scene
-// document so it is saved and restored with the host project. The audio
-// thread never touches the document.
+// Passes the input through untouched and adds the repetition(s) on top.
+// The scene document and the decoded source live on the message thread; the
+// audio thread only sees immutable PlaybackPlans handed over lock-free.
 class SpatialEchoProcessor final : public juce::AudioProcessor
 {
 public:
     static constexpr int kStateVersion = 1;
 
     SpatialEchoProcessor();
-    ~SpatialEchoProcessor() override = default;
+    ~SpatialEchoProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -50,7 +53,39 @@ public:
     void setDocument (Document);
     juce::StringArray getLastLoadWarnings() const;
 
+    struct SourceStatus
+    {
+        bool loaded = false;
+        juce::String fileName;
+        double seconds = 0.0;
+        double sampleRate = 0.0;
+        int numChannels = 0;
+        bool embedded = false;
+        juce::String message;  // last error or warning, empty if none
+    };
+
+    // Message thread.
+    juce::Result loadSourceFile (const juce::File&);
+    juce::Result loadSourceBytes (const juce::MemoryBlock& wavBytes, const juce::String& originalPath);
+    SourceStatus getSourceStatus() const;
+    void requestPreview() noexcept { previewRequested.store (true); }
+
 private:
+    void rebuildPlan();
+    void restoreSourceFromDocument();
+
+    EchoEngine engine;
+    PlanExchange<PlaybackPlan> plans;
+    std::atomic<double> hostSampleRate { 44100.0 };
+    std::atomic<bool> previewRequested { false };
+    bool lastTrigger = false;
+    std::atomic<float>* mixPercent = nullptr;
+    std::atomic<float>* triggerValue = nullptr;
+    juce::SmoothedValue<float> wetLevel { 0.7f };
+
+    std::shared_ptr<const DecodedAudio> source;  // guarded by documentLock
+    juce::String sourceMessage;                  // guarded by documentLock
+
     juce::AudioProcessorValueTreeState parameters;
     std::atomic<float>* outputDb = nullptr;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outputGain { 1.0f };

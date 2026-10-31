@@ -40,6 +40,9 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/VoicePresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/Serialization.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/DemoScene.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/SourceAudio.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp)
 target_include_directories(ses_shared INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -47,6 +50,7 @@ target_compile_definitions(ses_shared INTERFACE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(ses_shared INTERFACE
     juce::juce_audio_utils
+    juce::juce_cryptography
     juce::juce_recommended_config_flags)
 
 target_link_libraries(SpatialEchoStudio PRIVATE
