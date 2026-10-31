@@ -8,6 +8,7 @@ add_executable(ses_tests
     ModelTests.cpp
     SerializationTests.cpp
     PluginStateTests.cpp
+    TransportTests.cpp
     EngineTests.cpp)
 
 target_link_libraries(ses_tests PRIVATE

@@ -385,3 +385,73 @@ TEST_CASE ("Processor: a non-WAV file is rejected and nothing changes")
     CHECK_FALSE (p.getSourceStatus().loaded);
     CHECK (p.getSourceStatus().message.isNotEmpty());
 }
+
+TEST_CASE ("Processor: state restores in either host order and at another sample rate")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor a;
+    a.prepareToPlay (44100.0, 512);
+    REQUIRE (a.loadSourceBytes (makeWav (constant (2, 9000, 0.25f), 44100.0), "C:/voz/hey.wav").wasOk());
+    a.getParameters().getParameter (params::mix)->setValueNotifyingHost (0.3f);
+    juce::MemoryBlock state;
+    a.getStateInformation (state);
+
+    for (const bool prepareFirst : { true, false })
+    {
+        SpatialEchoProcessor b;
+        if (prepareFirst)
+            b.prepareToPlay (96000.0, 64);
+        b.setStateInformation (state.getData(), (int) state.getSize());
+        if (! prepareFirst)
+            b.prepareToPlay (96000.0, 64);
+        const auto st = b.getSourceStatus();
+        CHECK (st.loaded);
+        CHECK (st.numChannels == 2);
+        CHECK (st.fileName == "hey.wav");
+        CHECK (b.getParameters().getParameter (params::mix)->getValue() == Catch::Approx (0.3f).margin (0.002));
+
+        // A second save from the restored instance is identical in content.
+        juce::MemoryBlock again;
+        b.getStateInformation (again);
+        SpatialEchoProcessor c;
+        c.setStateInformation (again.getData(), (int) again.getSize());
+        CHECK (c.getSourceStatus().loaded);
+        CHECK (c.getDocument() == b.getDocument());
+    }
+}
+
+TEST_CASE ("Processor: the UI trigger button fires once per click, even with the Trigger parameter left on")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const double sr = 48000.0;
+    const int block = 480;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (sr, block);
+    REQUIRE (p.loadSourceBytes (makeWav (constant (1, 2400, 0.5f), sr), "C:/a.wav").wasOk());
+    p.getParameters().getParameter (params::trigger)->setValueNotifyingHost (1.0f);  // left on
+
+    FakePlayHead head;
+    head.info.setBpm (120.0);
+    head.info.setIsPlaying (true);
+    p.setPlayHead (&head);
+    juce::AudioBuffer<float> buf (2, block);
+    juce::MidiBuffer midi;
+    int b = 0;
+    auto runBlocks = [&] (int count)
+    {
+        for (int i = 0; i < count; ++i, ++b)
+        {
+            head.info.setPpqPosition (b * block * 2.0 / sr);
+            buf.clear();
+            p.processBlock (buf, midi);
+        }
+    };
+    runBlocks (10);
+    const int afterParam = p.getHostSnapshot().triggers.load();
+    p.requestTrigger();
+    runBlocks (1);
+    p.requestTrigger();
+    runBlocks (1);
+    CHECK (p.getHostSnapshot().triggers.load() == afterParam + 2);
+    p.setPlayHead (nullptr);
+}

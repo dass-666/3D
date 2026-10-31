@@ -28,14 +28,12 @@ private:
 
     juce::TextButton loadButton { "Cargar WAV..." };
     juce::TextButton previewButton { "Vista previa" };
-    juce::ToggleButton triggerButton { "Trigger" };
+    juce::TextButton triggerButton { "Disparar" };
     juce::Label statusLabel, noteLabel, mixLabel, outputLabel;
     juce::Slider mixSlider, outputSlider;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<SliderAttachment> mixAttachment, outputAttachment;
-    std::unique_ptr<ButtonAttachment> triggerAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpatialEchoEditor)

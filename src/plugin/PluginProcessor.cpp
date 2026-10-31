@@ -11,6 +11,18 @@ namespace
 const juce::Identifier stateRootTag { "SpatialEchoStudioState" };
 const juce::Identifier stateVersionAttr { "stateVersion" };
 const juce::Identifier documentTag { "SceneDocument" };
+const juce::Identifier diagnosticsAttr { "diagnostics" };
+
+// File name without touching juce::File (relative paths assert there).
+juce::String fileNameOf (const juce::String& path)
+{
+    return path.fromLastOccurrenceOf ("/", false, false).fromLastOccurrenceOf ("\\", false, false);
+}
+
+juce::String storageName (SourceRef::Storage s)
+{
+    return s == SourceRef::Storage::Embedded ? "embedded" : s == SourceRef::Storage::Reference ? "reference" : "none";
+}
 }
 
 SpatialEchoProcessor::SpatialEchoProcessor()
@@ -23,6 +35,7 @@ SpatialEchoProcessor::SpatialEchoProcessor()
     outputDb = parameters.getRawParameterValue (params::output);
     mixPercent = parameters.getRawParameterValue (params::mix);
     triggerValue = parameters.getRawParameterValue (params::trigger);
+    diagnostics.log (juce::String ("plugin created (") + juce::PluginHostType().getHostDescription() + ")");
 }
 
 SpatialEchoProcessor::~SpatialEchoProcessor() = default;
@@ -35,10 +48,11 @@ bool SpatialEchoProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     return supported && in == out;
 }
 
-void SpatialEchoProcessor::prepareToPlay (double sampleRate, int)
+void SpatialEchoProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     // Not concurrent with processBlock, so the engine and plan can be reset here.
     hostSampleRate.store (sampleRate);
+    diagnostics.log ("prepareToPlay sr=" + juce::String (sampleRate) + " block=" + juce::String (samplesPerBlock));
     engine.prepare (sampleRate);
     lastTrigger = triggerValue->load() > 0.5f;
 
@@ -68,11 +82,13 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (auto ppq = pos->getPpqPosition())
                 transport.ppq = *ppq;
             transport.isPlaying = pos->getIsPlaying();
+            if (auto samples = pos->getTimeInSamples())
+                transport.timeSamples = *samples;
         }
     }
 
     const bool trig = triggerValue->load() > 0.5f;
-    const bool rising = trig && ! lastTrigger;
+    const bool rising = (trig && ! lastTrigger) | triggerRequested.exchange (false);
     lastTrigger = trig;
     const bool preview = previewRequested.exchange (false);
 
@@ -84,6 +100,7 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     const auto* plan = plans.acquire();
     engine.process (buffer, plan, transport, rising, preview, wetStart, wetEnd);
     plans.release();
+    hostSnapshot.store (transport, n, engine.stats(), engine.numActiveVoices());
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (outputDb->load()));
     if (! outputGain.isSmoothing())
@@ -175,6 +192,8 @@ juce::Result SpatialEchoProcessor::loadSourceBytes (const juce::MemoryBlock& byt
         sourceMessage = {};
     }
     rebuildPlan();
+    diagnostics.log ("WAV loaded " + fileNameOf (originalPath) + " bytes=" + juce::String ((juce::int64) bytes.getSize())
+                     + ((juce::int64) bytes.getSize() <= kMaxEmbeddedBytes ? " (embedded)" : " (reference only: larger than 16 MB)"));
     return juce::Result::ok();
 }
 
@@ -195,7 +214,7 @@ void SpatialEchoProcessor::restoreSourceFromDocument()
         juce::MemoryBlock bytes;
         if (ref.storage == SourceRef::Storage::Embedded)
             bytes = ref.embeddedData;
-        else if (! juce::File (ref.filePath).loadFileAsData (bytes))
+        else if (! juce::File::isAbsolutePath (ref.filePath) || ! juce::File (ref.filePath).loadFileAsData (bytes))
             message = "source file not found: " + ref.filePath;
 
         if (bytes.getSize() > 0)
@@ -227,7 +246,7 @@ SpatialEchoProcessor::SourceStatus SpatialEchoProcessor::getSourceStatus() const
     st.seconds = source->buffer.getNumSamples() / source->sampleRate;
     if (const auto* scene = document.activeScene())
     {
-        st.fileName = juce::File (scene->source.filePath).getFileName();
+        st.fileName = fileNameOf (scene->source.filePath);
         st.embedded = scene->source.storage == SourceRef::Storage::Embedded;
     }
     return st;
@@ -244,17 +263,33 @@ void SpatialEchoProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto* docXml = root.createNewChildElement (documentTag);
     docXml->addTextElement (toJson (getDocument()));
 
+    root.setAttribute (diagnosticsAttr, diagnostics.isEnabled());
     copyXmlToBinary (root, destData);
+
+    const auto doc = getDocument();
+    const auto* scene = doc.activeScene();
+    diagnostics.log ("getState " + juce::String ((juce::int64) destData.getSize()) + " bytes, source="
+                     + (scene ? storageName (scene->source.storage) : "none")
+                     + (scene ? " embeddedBytes=" + juce::String ((juce::int64) scene->source.embeddedData.getSize()) : ""));
 }
 
 void SpatialEchoProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
+    diagnostics.log ("setState " + juce::String (sizeInBytes) + " bytes, thread="
+                     + (juce::MessageManager::existsAndIsCurrentThread() ? "message" : "OTHER"));
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (stateRootTag))
+    {
+        diagnostics.log ("setState IGNORED: not our state format");
         return;  // unknown data: keep current state
+    }
 
     if (xml->getIntAttribute (stateVersionAttr, 0) > kStateVersion)
+    {
+        diagnostics.log ("setState IGNORED: newer state version");
         return;  // written by a newer plugin version: do not guess
+    }
+    diagnostics.setEnabled (xml->getBoolAttribute (diagnosticsAttr, true));
 
     if (auto* paramsXml = xml->getChildByName (parameters.state.getType()))
         parameters.replaceState (juce::ValueTree::fromXml (*paramsXml));
@@ -276,6 +311,16 @@ void SpatialEchoProcessor::setStateInformation (const void* data, int sizeInByte
         }
         restoreSourceFromDocument();
         rebuildPlan();
+
+        const auto st = getSourceStatus();
+        diagnostics.log ("setState restored: source " + (st.loaded ? "OK " + st.fileName + " " + juce::String (st.seconds, 2) + " s"
+                                                                     : juce::String ("NOT loaded"))
+                         + (st.message.isNotEmpty() ? " | " + st.message : juce::String())
+                         + " | warnings: " + getLastLoadWarnings().joinIntoString ("; "));
+    }
+    else
+    {
+        diagnostics.log ("setState: no scene document in state");
     }
 }
 

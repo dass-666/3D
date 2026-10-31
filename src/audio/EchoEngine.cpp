@@ -76,19 +76,24 @@ void EchoEngine::schedule (const PlaybackPlan& plan, double referenceBeat) noexc
     {
         auto slot = std::find_if (pending.begin(), pending.end(), [] (auto& p) { return ! p.active; });
         if (slot == pending.end())
-            return;  // queue full: drop rather than allocate
+        {
+            ++engineStats.dropped;  // queue full: drop rather than allocate
+            return;
+        }
         *slot = { true, referenceBeat + echo.beat, echo.gain };
+        engineStats.lastScheduledBeat = referenceBeat + echo.beat;
     }
 }
 
-void EchoEngine::startVoice (float gain, int offset, juce::AudioBuffer<float>& buffer, const PlaybackPlan& plan) noexcept
+bool EchoEngine::startVoice (float gain, int offset, juce::AudioBuffer<float>& buffer, const PlaybackPlan& plan) noexcept
 {
     auto slot = std::find_if (voices.begin(), voices.end(), [] (auto& v) { return ! v.active; });
     if (slot == voices.end())
-        return;  // all voices busy: drop rather than cut a sounding voice
+        return false;  // all voices busy: drop rather than cut a sounding voice
 
     *slot = { true, 0, gain };
     renderVoice (*slot, buffer, offset, buffer.getNumSamples(), plan);
+    return true;
 }
 
 void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int start, int end,
@@ -154,7 +159,18 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
     bpmUsed = std::clamp (t.bpm.value_or (kFallbackBpm), 20.0, 999.0);
     const double beatsPerSample = bpmUsed / 60.0 / sampleRate;
 
-    const bool host = t.isPlaying && t.ppq.has_value();
+    // Host position: ppq if given, otherwise derived from the sample position
+    // (constant-tempo assumption) so a host that omits ppq still gets a grid.
+    std::optional<double> hostBeat = t.ppq;
+    engineStats.ppqDerivedFromSamples = false;
+    if (! hostBeat && t.isPlaying && t.timeSamples)
+    {
+        hostBeat = (double) *t.timeSamples * beatsPerSample;
+        engineStats.ppqDerivedFromSamples = true;
+    }
+
+    const bool host = t.isPlaying && hostBeat.has_value();
+    engineStats.usedHostTimeline = host;
     if (host != onHostTimeline)
     {
         cancelPending();  // the timeline changed meaning
@@ -162,9 +178,25 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
         expectedHostBeat.reset();
     }
 
-    const double blockStart = host ? *t.ppq : internalBeat;
-    if (host && expectedHostBeat && std::abs (blockStart - *expectedHostBeat) > 1.0e-3)
-        cancelPending();  // loop, jump or relocation
+    const double blockStart = host ? *hostBeat : internalBeat;
+    const double toleranceBeats = std::max (kJumpToleranceSeconds * bpmUsed / 60.0, 1.5 * n * beatsPerSample);
+    if (host && expectedHostBeat)
+    {
+        // B2 fix: the previous 1e-3 beat threshold treated host rounding and
+        // tempo changes inside a block as relocations and silently cancelled
+        // the pending repetition.
+        const double d = blockStart - *expectedHostBeat;
+        if (std::abs (d) > toleranceBeats)
+        {
+            cancelPending();  // loop, jump or relocation
+            ++engineStats.jumps;
+            engineStats.lastJumpBeats = d;
+        }
+        else
+        {
+            engineStats.maxJitterBeats = std::max (engineStats.maxJitterBeats, std::abs (d));
+        }
+    }
 
     if (plan != nullptr)
     {
@@ -174,6 +206,8 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
             // a grid position lands exactly on it). When stopped there is no grid: start now.
             const double grid = plan->gridBeats;
             const double ref = host ? std::ceil (blockStart / grid - 1.0e-6) * grid : blockStart;
+            ++engineStats.triggers;
+            engineStats.lastTriggerBeat = blockStart;
             schedule (*plan, ref);
         }
         if (previewRequested)
@@ -190,14 +224,33 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
             const double offset = (p.startBeat - blockStart) / beatsPerSample;
             if (offset < -0.5)
             {
-                p.active = false;  // missed (should not happen without a jump)
+                // The host moved slightly past it (jitter): play it now rather than lose it.
+                p.active = false;
+                if ((blockStart - p.startBeat) <= toleranceBeats && startVoice (p.gain, 0, buffer, *plan))
+                {
+                    ++engineStats.fired;
+                    ++engineStats.firedLate;
+                    engineStats.lastFiredBeat = blockStart;
+                }
+                else
+                {
+                    ++engineStats.dropped;
+                }
                 continue;
             }
             const auto startSample = (int) std::llround (std::max (0.0, offset));
             if (startSample < n)
             {
                 p.active = false;
-                startVoice (p.gain, startSample, buffer, *plan);
+                if (startVoice (p.gain, startSample, buffer, *plan))
+                {
+                    ++engineStats.fired;
+                    engineStats.lastFiredBeat = blockStart + startSample * beatsPerSample;
+                }
+                else
+                {
+                    ++engineStats.dropped;
+                }
             }
         }
     }

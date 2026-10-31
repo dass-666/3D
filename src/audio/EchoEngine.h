@@ -40,6 +40,22 @@ struct TransportInfo
     std::optional<double> bpm;     // host tempo if known
     std::optional<double> ppq;     // host position in quarter notes if known
     bool isPlaying = false;
+    std::optional<juce::int64> timeSamples;  // host position in samples, used when ppq is missing
+};
+
+// Counters for diagnostics (read by the processor after each block).
+struct EngineStats
+{
+    int triggers = 0;          // trigger edges accepted
+    int fired = 0;             // repetitions started
+    int firedLate = 0;         // started late (host skipped a little past them)
+    int dropped = 0;           // pending events dropped (too late, queue or voices full)
+    int jumps = 0;             // transport relocations detected
+    double lastJumpBeats = 0.0;
+    double maxJitterBeats = 0.0;  // largest host-vs-predicted difference accepted as jitter
+    double lastTriggerBeat = 0.0, lastScheduledBeat = 0.0, lastFiredBeat = 0.0;
+    bool usedHostTimeline = false;
+    bool ppqDerivedFromSamples = false;
 };
 
 class EchoEngine
@@ -49,6 +65,9 @@ public:
     static constexpr int kMaxPending = 16;
     static constexpr double kFallbackBpm = 120.0;
     static constexpr double kFadeSeconds = 0.002;
+    // Host position differences up to this are jitter/rounding (FL Studio and
+    // tempo changes inside a block produce them); larger ones are relocations.
+    static constexpr double kJumpToleranceSeconds = 0.1;
 
     void prepare (double sampleRate);
     void reset();  // stops everything immediately
@@ -61,6 +80,7 @@ public:
     int numActiveVoices() const noexcept;
     int numPendingEvents() const noexcept;
     double lastBpmUsed() const noexcept { return bpmUsed; }
+    const EngineStats& stats() const noexcept { return engineStats; }
 
 private:
     struct Voice
@@ -78,7 +98,7 @@ private:
     };
 
     void schedule (const PlaybackPlan&, double referenceBeat) noexcept;
-    void startVoice (float gain, int offsetInBlock, juce::AudioBuffer<float>&, const PlaybackPlan&) noexcept;
+    bool startVoice (float gain, int offsetInBlock, juce::AudioBuffer<float>&, const PlaybackPlan&) noexcept;
     void renderVoice (Voice&, juce::AudioBuffer<float>&, int start, int end, const PlaybackPlan&) noexcept;
     void cancelPending() noexcept;
 
@@ -91,6 +111,7 @@ private:
     bool onHostTimeline = false;
     double internalBeat = 0.0;
     std::optional<double> expectedHostBeat;
+    EngineStats engineStats;
     const PlaybackPlan* lastPlan = nullptr;
 
     std::array<Voice, kMaxVoices> voices {};

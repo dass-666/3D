@@ -44,7 +44,8 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/PluginProcessor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Diagnostics.cpp)
 target_include_directories(ses_shared INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(ses_shared INTERFACE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)

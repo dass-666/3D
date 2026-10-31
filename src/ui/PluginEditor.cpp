@@ -8,6 +8,7 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
 {
     loadButton.onClick = [this] { chooseFile(); };
     previewButton.onClick = [this] { processor.requestPreview(); };
+    triggerButton.onClick = [this] { processor.requestTrigger(); };
 
     for (auto* s : { &mixSlider, &outputSlider })
     {
@@ -31,7 +32,6 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     auto& apvts = processor.getParameters();
     mixAttachment = std::make_unique<SliderAttachment> (apvts, params::mix, mixSlider);
     outputAttachment = std::make_unique<SliderAttachment> (apvts, params::output, outputSlider);
-    triggerAttachment = std::make_unique<ButtonAttachment> (apvts, params::trigger, triggerButton);
 
     setSize (480, 240);
     refreshStatus();

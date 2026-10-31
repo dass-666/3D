@@ -4,6 +4,7 @@
 #include "audio/PlanExchange.h"
 #include "audio/SourceAudio.h"
 #include "model/Scene.h"
+#include "plugin/Diagnostics.h"
 #include "plugin/Parameters.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -69,6 +70,12 @@ public:
     juce::Result loadSourceBytes (const juce::MemoryBlock& wavBytes, const juce::String& originalPath);
     SourceStatus getSourceStatus() const;
     void requestPreview() noexcept { previewRequested.store (true); }
+    // Momentary trigger from the UI: same as an off->on edge of the Trigger
+    // parameter, but a click can never be "used up" by leaving the toggle on.
+    void requestTrigger() noexcept { triggerRequested.store (true); }
+
+    const HostSnapshot& getHostSnapshot() const noexcept { return hostSnapshot; }
+    DiagnosticLog& getDiagnostics() noexcept { return diagnostics; }
 
 private:
     void rebuildPlan();
@@ -78,6 +85,9 @@ private:
     PlanExchange<PlaybackPlan> plans;
     std::atomic<double> hostSampleRate { 44100.0 };
     std::atomic<bool> previewRequested { false };
+    std::atomic<bool> triggerRequested { false };
+    HostSnapshot hostSnapshot;
+    DiagnosticLog diagnostics { hostSnapshot };
     bool lastTrigger = false;
     std::atomic<float>* mixPercent = nullptr;
     std::atomic<float>* triggerValue = nullptr;
