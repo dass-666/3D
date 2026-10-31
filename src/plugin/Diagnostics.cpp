@@ -2,6 +2,15 @@
 
 namespace ses
 {
+namespace
+{
+// The unit tests build this code as a standalone app: never write files there.
+#if JUCE_STANDALONE_APPLICATION
+constexpr bool kFileLoggingAllowed = false;
+#else
+constexpr bool kFileLoggingAllowed = true;
+#endif
+}
 
 bool HostSnapshot::isSounding (juce::uint64 key) const noexcept
 {
@@ -52,6 +61,7 @@ void HostSnapshot::store (const TransportInfo& t, int numSamples, const EngineSt
 
 DiagnosticLog::DiagnosticLog (const HostSnapshot& s) : snapshot (s)
 {
+    enabled = kFileLoggingAllowed;
     startTimerHz (5);
 }
 
@@ -71,7 +81,7 @@ juce::File DiagnosticLog::getFile() const
 void DiagnosticLog::setEnabled (bool shouldBeEnabled)
 {
     const juce::ScopedLock sl (lock);
-    enabled = shouldBeEnabled;
+    enabled = shouldBeEnabled && kFileLoggingAllowed;
     if (! enabled)
         out.reset();
 }

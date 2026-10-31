@@ -42,6 +42,7 @@ private:
     bool playing = false, hostTimeline = false;
     float limiterDb = 0.0f;
     juce::Rectangle<int> transportArea;
+    bool compactLogo = false;
 };
 
 } // namespace ses

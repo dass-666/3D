@@ -145,12 +145,15 @@ void HeaderBar::paint (juce::Graphics& g)
         g.setColour ((i == 2 ? theme::blue : theme::violet).withAlpha (1.0f - 0.22f * (float) i));
         g.strokePath (arc, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
+    if (! compactLogo)
+    {
     g.setColour (theme::text);
     g.setFont (theme::font (15.0f, true));
     g.drawText ("SPATIAL ECHO", juce::Rectangle<float> (52.0f, r.getCentreY() - 17.0f, 140.0f, 18.0f), juce::Justification::centredLeft);
     g.setColour (theme::textDim);
     g.setFont (theme::font (11.0f, true));
     g.drawText ("STUDIO", juce::Rectangle<float> (52.0f, r.getCentreY() + 1.0f, 140.0f, 14.0f), juce::Justification::centredLeft);
+    }
 
     // Transport readout.
     auto t = transportArea.toFloat();
@@ -190,13 +193,14 @@ void HeaderBar::paint (juce::Graphics& g)
 void HeaderBar::resized()
 {
     auto r = getLocalBounds().reduced (12, 8);
-    r.removeFromLeft (160);
+    compactLogo = getWidth() < 1200;
+    r.removeFromLeft (compactLogo ? 50 : 160);
 
     auto modes = r.removeFromLeft (120).withSizeKeepingCentre (120, 30);
     easyButton.setBounds (modes.removeFromLeft (60));
     proButton.setBounds (modes);
     r.removeFromLeft (12);
-    sceneName.setBounds (r.removeFromLeft (140).withSizeKeepingCentre (140, 28));
+    sceneName.setBounds (r.removeFromLeft (130).withSizeKeepingCentre (130, 28));
     r.removeFromLeft (4);
     sceneMenu.setBounds (r.removeFromLeft (92).withSizeKeepingCentre (92, 30));
     r.removeFromLeft (12);
@@ -208,7 +212,7 @@ void HeaderBar::resized()
     r.removeFromRight (6);
     auto knob = [&] (juce::Slider& s, juce::Label& l)
     {
-        auto k = r.removeFromRight (104);
+        auto k = r.removeFromRight (98);
         l.setBounds (k.removeFromTop (14).withTrimmedRight (58));
         s.setBounds (k);
         r.removeFromRight (2);

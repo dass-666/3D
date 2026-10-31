@@ -56,7 +56,7 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     soundInfo.setFont (theme::font (12.5f, true));
     soundInfo.setColour (juce::Label::textColourId, theme::textDim);
     addAndMakeVisible (soundInfo);
-    pendingNote.setText (u8 ("Pitch, car\xc3\xa1" "cter y velocidad: PR\xc3\x93XIMAMENTE (B4). Se guardan con el preset; todav\xc3\xad" "a no cambian el sonido."),
+    pendingNote.setText (u8 ("Pitch, car\xc3\xa1" "cter y velocidad: PR\xc3\x93XIMAMENTE (B4). Se guardan; a\xc3\xban no suenan."),
                          juce::dontSendNotification);
     pendingNote.setFont (theme::font (11.5f));
     pendingNote.setColour (juce::Label::textColourId, theme::textFaint);

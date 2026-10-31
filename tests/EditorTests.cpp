@@ -88,7 +88,7 @@ TEST_CASE ("Editor: builds, paints, and map/panel/timeline share one model in bo
     CHECK (ctx.scene().points[1].timing.beat == 0.0);
 
     ctx.select (ctx.scene().points[1].id, false);
-    ed->setSize (1240, 820);
+    ed->setSize (1240, 840);
     snapshot (*ed, "ui-easy.png");
 
     // Pro mode: same state, more precision; switching back loses nothing.
@@ -106,7 +106,7 @@ TEST_CASE ("Editor: builds, paints, and map/panel/timeline share one model in bo
     CHECK (q.getUiMode() == UiMode::Pro);
     CHECK (q.getSceneForUi() == before);
 
-    ed->setSize (1000, 700);  // minimum size still lays out
+    ed->setSize (1080, 790);  // minimum size still lays out
     snapshot (*ed, "ui-min.png");
 }
 

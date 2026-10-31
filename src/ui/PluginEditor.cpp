@@ -66,8 +66,8 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     // After the children exist, so they rebuild their parts (text boxes) with it.
     setLookAndFeel (&lnf);
     setResizable (true, true);
-    setResizeLimits (1000, 700, 2000, 1400);
-    setSize (1240, 820);
+    setResizeLimits (1080, 790, 2000, 1400);
+    setSize (1240, 840);
     setProMode (processor.getUiMode() == UiMode::Pro);
     refreshAudioInfo();
     refreshToolbar();
@@ -231,12 +231,12 @@ void SpatialEchoEditor::resized()
     {
         auto m = mapPanel.reduced (14, 10);
         auto tools = m.removeFromTop (26);
-        tools.removeFromLeft (230);
-        countLabel.setBounds (tools.removeFromRight (70));
+        tools.removeFromLeft (200);
+        countLabel.setBounds (tools.removeFromRight (60));
         for (auto* b : { &addButton, &duplicateButton, &muteButton, &deleteButton })
         {
-            b->setBounds (tools.removeFromLeft (92));
-            tools.removeFromLeft (6);
+            b->setBounds (tools.removeFromLeft (86));
+            tools.removeFromLeft (5);
         }
         map.setBounds (m);
     }
