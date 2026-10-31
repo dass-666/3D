@@ -1,0 +1,481 @@
+#include "model/Serialization.h"
+
+#include <algorithm>
+#include <set>
+
+namespace ses
+{
+namespace
+{
+using juce::var;
+
+var obj() { return var (new juce::DynamicObject()); }
+
+void set (var& o, const char* key, const var& value)
+{
+    o.getDynamicObject()->setProperty (key, value);
+}
+
+juce::String storageToString (SourceRef::Storage s)
+{
+    switch (s)
+    {
+        case SourceRef::Storage::None:      return "none";
+        case SourceRef::Storage::Reference: return "reference";
+        case SourceRef::Storage::Embedded:  return "embedded";
+    }
+    return "none";
+}
+
+std::optional<SourceRef::Storage> storageFromString (const juce::String& s)
+{
+    if (s == "none")      return SourceRef::Storage::None;
+    if (s == "reference") return SourceRef::Storage::Reference;
+    if (s == "embedded")  return SourceRef::Storage::Embedded;
+    return std::nullopt;
+}
+
+// ---- writing --------------------------------------------------------------
+
+var soundToVar (const SoundSettings& s)
+{
+    auto o = obj();
+    set (o, "pitchSemitones", s.pitchSemitones);
+    set (o, "character", s.character);
+    set (o, "speedPercent", s.speedPercent);
+    return o;
+}
+
+var pointToVar (const Point& p)
+{
+    auto o = obj();
+    set (o, "id", p.id);
+    set (o, "number", p.number);
+    set (o, "enabled", p.enabled);
+
+    auto pos = obj();
+    set (pos, "x", p.position.x);
+    set (pos, "y", p.position.y);
+    set (o, "position", pos);
+
+    auto timing = obj();
+    set (timing, "beat", p.timing.beat);
+    set (o, "timing", timing);
+
+    auto voice = obj();
+    set (voice, "presetId", p.voice.presetId);
+    set (voice, "presetName", p.voice.presetName);
+    set (voice, "modified", p.voice.modified);
+    set (o, "voice", voice);
+
+    set (o, "sound", soundToVar (p.sound));
+    set (o, "volumePercent", p.volumePercent);
+    return o;
+}
+
+var sourceToVar (const SourceRef& s)
+{
+    auto o = obj();
+    set (o, "storage", storageToString (s.storage));
+    set (o, "filePath", s.filePath);
+    set (o, "contentHash", s.contentHash);
+    set (o, "encoding", s.encoding);
+    set (o, "sampleRate", s.sampleRate);
+    set (o, "numChannels", s.numChannels);
+    set (o, "numSamples", s.numSamples);
+    set (o, "trimStart", s.trimStart);
+    set (o, "trimEnd", s.trimEnd);
+    set (o, "embeddedData", s.embeddedData.isEmpty() ? juce::String()
+                                                     : juce::Base64::toBase64 (s.embeddedData.getData(), s.embeddedData.getSize()));
+    return o;
+}
+
+var sceneToVar (const Scene& s)
+{
+    auto o = obj();
+    set (o, "id", s.id);
+    set (o, "name", s.name);
+    set (o, "rhythm", toString (s.rhythm));
+    set (o, "mixPercent", s.mixPercent);
+    set (o, "spatialMode", toString (s.spatialMode));
+    set (o, "maxPoints", s.maxPoints);
+    set (o, "source", sourceToVar (s.source));
+
+    juce::Array<var> points;
+    for (auto& p : s.points)
+        points.add (pointToVar (p));
+    set (o, "points", points);
+    return o;
+}
+
+// ---- reading (tolerant: repair and warn, fail only on unusable input) -----
+
+struct Reader
+{
+    juce::StringArray& warnings;
+
+    double number (const var& o, const char* key, double fallback, double lo, double hi, const juce::String& where)
+    {
+        const auto v = o.getProperty (key, var());
+        if (v.isVoid())
+            return fallback;
+        if (! (v.isDouble() || v.isInt() || v.isInt64()))
+        {
+            warnings.add (where + "." + key + ": not a number, using default");
+            return fallback;
+        }
+        const auto d = (double) v;
+        if (! std::isfinite (d))
+        {
+            warnings.add (where + "." + key + ": not finite, using default");
+            return fallback;
+        }
+        if (d < lo || d > hi)
+        {
+            warnings.add (where + "." + key + ": out of range, clamped");
+            return std::clamp (d, lo, hi);
+        }
+        return d;
+    }
+
+    juce::int64 integer (const var& o, const char* key, juce::int64 fallback, juce::int64 lo, juce::int64 hi, const juce::String& where)
+    {
+        const auto v = o.getProperty (key, var());
+        if (v.isVoid())
+            return fallback;
+        if (! (v.isDouble() || v.isInt() || v.isInt64()))
+        {
+            warnings.add (where + "." + key + ": not a number, using default");
+            return fallback;
+        }
+        const auto i = (juce::int64) v;
+        if (i < lo || i > hi)
+        {
+            warnings.add (where + "." + key + ": out of range, clamped");
+            return std::clamp (i, lo, hi);
+        }
+        return i;
+    }
+
+    static juce::String text (const var& o, const char* key, const juce::String& fallback = {})
+    {
+        const auto v = o.getProperty (key, var());
+        return v.isString() ? v.toString() : fallback;
+    }
+
+    static bool flag (const var& o, const char* key, bool fallback)
+    {
+        const auto v = o.getProperty (key, var());
+        return v.isBool() ? (bool) v : fallback;
+    }
+
+    SoundSettings sound (const var& o, const juce::String& where)
+    {
+        SoundSettings s;
+        s.pitchSemitones = number (o, "pitchSemitones", 0.0, limits::minPitch, limits::maxPitch, where);
+        s.character = number (o, "character", 0.0, limits::minCharacter, limits::maxCharacter, where);
+        s.speedPercent = number (o, "speedPercent", 100.0, limits::minSpeed, limits::maxSpeed, where);
+        return s;
+    }
+
+    Point point (const var& o, const juce::String& where)
+    {
+        Point p;
+        p.id = text (o, "id");
+        p.number = (int) integer (o, "number", 0, 0, 9999, where);
+        p.enabled = flag (o, "enabled", true);
+
+        const auto pos = o.getProperty ("position", var());
+        p.position.x = number (pos, "x", 50.0, limits::minCoord, limits::maxCoord, where + ".position");
+        p.position.y = number (pos, "y", 50.0, limits::minCoord, limits::maxCoord, where + ".position");
+
+        const auto timing = o.getProperty ("timing", var());
+        p.timing.beat = number (timing, "beat", 0.0, limits::minBeat, limits::maxBeat, where + ".timing");
+
+        const auto voice = o.getProperty ("voice", var());
+        p.voice.presetId = text (voice, "presetId", presetIds::original);
+        p.voice.presetName = text (voice, "presetName", "Original");
+        p.voice.modified = flag (voice, "modified", false);
+
+        p.sound = sound (o.getProperty ("sound", var()), where + ".sound");
+        p.volumePercent = number (o, "volumePercent", 100.0, limits::minVolume, limits::maxVolume, where);
+        return p;
+    }
+
+    SourceRef source (const var& o, const juce::String& where)
+    {
+        SourceRef s;
+        if (! o.isObject())
+            return s;
+
+        if (auto st = storageFromString (text (o, "storage", "none")))
+            s.storage = *st;
+        else
+            warnings.add (where + ".storage: unknown value, using none");
+
+        s.filePath = text (o, "filePath");
+        s.contentHash = text (o, "contentHash");
+        s.encoding = text (o, "encoding");
+        s.sampleRate = number (o, "sampleRate", 0.0, 0.0, 1.0e6, where);
+        s.numChannels = (int) integer (o, "numChannels", 0, 0, 64, where);
+        s.numSamples = integer (o, "numSamples", 0, 0, std::numeric_limits<juce::int64>::max(), where);
+        s.trimStart = integer (o, "trimStart", 0, 0, std::numeric_limits<juce::int64>::max(), where);
+        s.trimEnd = integer (o, "trimEnd", 0, 0, std::numeric_limits<juce::int64>::max(), where);
+
+        const auto b64 = text (o, "embeddedData");
+        if (b64.isNotEmpty())
+        {
+            juce::MemoryOutputStream out;
+            if (juce::Base64::convertFromBase64 (out, b64))
+                s.embeddedData = out.getMemoryBlock();
+            else
+                warnings.add (where + ".embeddedData: invalid base64, dropped");
+        }
+
+        if (s.storage == SourceRef::Storage::Embedded && s.embeddedData.isEmpty())
+        {
+            warnings.add (where + ": embedded storage without data, treated as reference");
+            s.storage = s.filePath.isNotEmpty() ? SourceRef::Storage::Reference : SourceRef::Storage::None;
+        }
+        return s;
+    }
+
+    Scene scene (const var& o, const juce::String& where)
+    {
+        Scene s;
+        s.id = text (o, "id");
+        s.name = text (o, "name");
+
+        if (auto r = rhythmFromString (text (o, "rhythm", "1/4")))
+            s.rhythm = *r;
+        else
+            warnings.add (where + ".rhythm: unknown value, using 1/4");
+
+        s.mixPercent = number (o, "mixPercent", 70.0, limits::minMix, limits::maxMix, where);
+
+        if (auto m = spatialModeFromString (text (o, "spatialMode", "stereo")))
+            s.spatialMode = *m;
+        else
+            warnings.add (where + ".spatialMode: not available in this version, using stereo");
+
+        s.maxPoints = (int) integer (o, "maxPoints", kDefaultMaxPoints, limits::minMaxPoints, limits::maxMaxPoints, where);
+        s.source = source (o.getProperty ("source", var()), where + ".source");
+
+        if (const auto* arr = o.getProperty ("points", var()).getArray())
+        {
+            for (int i = 0; i < arr->size(); ++i)
+            {
+                if ((int) s.points.size() >= s.maxPoints)
+                {
+                    warnings.add (where + ".points: more than maxPoints, extra points dropped");
+                    break;
+                }
+                if (arr->getReference (i).isObject())
+                    s.points.push_back (point (arr->getReference (i), where + ".points[" + juce::String (i) + "]"));
+            }
+        }
+        return s;
+    }
+};
+
+// Ids must be non-empty and unique; numbers must be positive and unique.
+void repairIdentity (Scene& scene, juce::StringArray& warnings)
+{
+    std::set<juce::String> seenIds;
+    std::set<int> seenNumbers;
+
+    for (auto& p : scene.points)
+    {
+        if (p.id.isEmpty() || seenIds.count (p.id) > 0)
+        {
+            warnings.add ("scene " + scene.id + ": point with missing/duplicate id got a new id");
+            p.id = makeId();
+        }
+        seenIds.insert (p.id);
+    }
+
+    std::vector<Point*> needNumber;
+    for (auto& p : scene.points)
+        if (p.number <= 0 || ! seenNumbers.insert (p.number).second)
+            needNumber.push_back (&p);
+
+    for (auto* p : needNumber)
+    {
+        int n = 1;
+        while (seenNumbers.count (n) > 0)
+            ++n;
+        p->number = n;
+        seenNumbers.insert (n);
+        warnings.add ("scene " + scene.id + ": point with missing/duplicate number renumbered");
+    }
+}
+
+LoadResult<var> parseAndCheckHeader (const juce::String& json, const char* formatName, int currentVersion)
+{
+    LoadResult<var> r;
+    var root;
+    const auto parsed = juce::JSON::parse (json, root);
+    if (parsed.failed() || ! root.isObject())
+    {
+        r.error = "invalid JSON: " + parsed.getErrorMessage();
+        return r;
+    }
+    if (root.getProperty ("format", var()).toString() != formatName)
+    {
+        r.error = "not a " + juce::String (formatName) + " file";
+        return r;
+    }
+    const auto version = root.getProperty ("formatVersion", var());
+    if (! (version.isInt() || version.isInt64() || version.isDouble()) || (int) version < 1)
+    {
+        r.error = "missing or invalid formatVersion";
+        return r;
+    }
+    if ((int) version > currentVersion)
+    {
+        r.error = "file was written by a newer version (formatVersion " + version.toString()
+                  + ", supported " + juce::String (currentVersion) + ")";
+        return r;
+    }
+    // Older versions would be migrated here. Version 1 is the first format.
+    r.value = root;
+    return r;
+}
+
+} // namespace
+
+juce::String toJson (const Document& doc)
+{
+    auto root = obj();
+    set (root, "format", kDocumentFormatName);
+    set (root, "formatVersion", kDocumentFormatVersion);
+    set (root, "activeSceneId", doc.activeSceneId);
+
+    juce::Array<var> scenes;
+    for (auto& s : doc.scenes)
+        scenes.add (sceneToVar (s));
+    set (root, "scenes", scenes);
+
+    return juce::JSON::toString (root, juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::multiLine)
+                                                                  .withMaxDecimalPlaces (17));
+}
+
+LoadResult<Document> documentFromJson (const juce::String& json)
+{
+    LoadResult<Document> result;
+    auto header = parseAndCheckHeader (json, kDocumentFormatName, kDocumentFormatVersion);
+    if (! header)
+    {
+        result.error = header.error;
+        return result;
+    }
+
+    const auto& root = *header.value;
+    Reader reader { result.warnings };
+    Document doc;
+
+    if (const auto* arr = root.getProperty ("scenes", var()).getArray())
+        for (int i = 0; i < arr->size(); ++i)
+            if (arr->getReference (i).isObject())
+                doc.scenes.push_back (reader.scene (arr->getReference (i), "scenes[" + juce::String (i) + "]"));
+
+    if (doc.scenes.empty())
+    {
+        result.error = "document has no scenes";
+        return result;
+    }
+
+    std::set<juce::String> sceneIds;
+    for (auto& s : doc.scenes)
+    {
+        if (s.id.isEmpty() || sceneIds.count (s.id) > 0)
+        {
+            result.warnings.add ("scene with missing/duplicate id got a new id");
+            s.id = makeId();
+        }
+        sceneIds.insert (s.id);
+        repairIdentity (s, result.warnings);
+    }
+
+    doc.activeSceneId = Reader::text (root, "activeSceneId");
+    if (sceneIds.count (doc.activeSceneId) == 0)
+    {
+        if (doc.activeSceneId.isNotEmpty())
+            result.warnings.add ("activeSceneId not found, using first scene");
+        doc.activeSceneId = doc.scenes.front().id;
+    }
+
+    result.value = std::move (doc);
+    return result;
+}
+
+juce::String voicePresetsToJson (const std::vector<VoicePreset>& userPresets)
+{
+    auto root = obj();
+    set (root, "format", kVoicePresetsFormatName);
+    set (root, "formatVersion", kVoicePresetsFormatVersion);
+
+    juce::Array<var> arr;
+    for (auto& p : userPresets)
+    {
+        if (p.builtIn)
+            continue;
+        auto o = obj();
+        set (o, "id", p.id);
+        set (o, "name", p.name);
+        set (o, "description", p.description);
+        set (o, "sound", soundToVar (p.sound));
+        set (o, "needsFutureProcessing", p.needsFutureProcessing);
+        arr.add (o);
+    }
+    set (root, "presets", arr);
+
+    return juce::JSON::toString (root, juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::multiLine)
+                                                                  .withMaxDecimalPlaces (17));
+}
+
+LoadResult<std::vector<VoicePreset>> voicePresetsFromJson (const juce::String& json)
+{
+    LoadResult<std::vector<VoicePreset>> result;
+    auto header = parseAndCheckHeader (json, kVoicePresetsFormatName, kVoicePresetsFormatVersion);
+    if (! header)
+    {
+        result.error = header.error;
+        return result;
+    }
+
+    Reader reader { result.warnings };
+    std::vector<VoicePreset> presets;
+    std::set<juce::String> ids;
+
+    if (const auto* arr = header.value->getProperty ("presets", var()).getArray())
+    {
+        for (int i = 0; i < arr->size(); ++i)
+        {
+            const auto& o = arr->getReference (i);
+            if (! o.isObject())
+                continue;
+
+            VoicePreset p;
+            p.id = Reader::text (o, "id");
+            p.name = Reader::text (o, "name");
+            p.description = Reader::text (o, "description");
+            p.sound = reader.sound (o.getProperty ("sound", var()), "presets[" + juce::String (i) + "].sound");
+            p.needsFutureProcessing = Reader::flag (o, "needsFutureProcessing", false);
+            p.builtIn = false;
+
+            if (p.id.isEmpty() || p.id.startsWith ("builtin.") || ids.count (p.id) > 0)
+            {
+                result.warnings.add ("preset with missing/reserved/duplicate id got a new id");
+                p.id = makeId();
+            }
+            ids.insert (p.id);
+            presets.push_back (std::move (p));
+        }
+    }
+
+    result.value = std::move (presets);
+    return result;
+}
+
+} // namespace ses
