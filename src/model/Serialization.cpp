@@ -52,6 +52,7 @@ var pointToVar (const Point& p)
     set (o, "id", p.id);
     set (o, "number", p.number);
     set (o, "enabled", p.enabled);
+    set (o, "solo", p.solo);
 
     auto pos = obj();
     set (pos, "x", p.position.x);
@@ -184,6 +185,7 @@ struct Reader
         p.id = text (o, "id");
         p.number = (int) integer (o, "number", 0, 0, 9999, where);
         p.enabled = flag (o, "enabled", true);
+        p.solo = flag (o, "solo", false);  // added after v1 shipped internally; optional
 
         const auto pos = o.getProperty ("position", var());
         p.position.x = number (pos, "x", 50.0, limits::minCoord, limits::maxCoord, where + ".position");

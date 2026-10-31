@@ -90,7 +90,8 @@ struct Point
 {
     juce::String id;     // stable identity: never reused, independent of number and timing
     int number = 0;      // display label only
-    bool enabled = true;
+    bool enabled = true;   // false = muted
+    bool solo = false;     // if any enabled point is soloed, only soloed points play
     Position position;
     Timing timing;
     VoiceRef voice;

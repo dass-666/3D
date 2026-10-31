@@ -2,6 +2,7 @@
 
 #include "audio/EchoEngine.h"
 #include "audio/PlanExchange.h"
+#include "audio/SafetyLimiter.h"
 #include "audio/SourceAudio.h"
 #include "model/Scene.h"
 #include "plugin/Diagnostics.h"
@@ -9,10 +10,14 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <functional>
+
 namespace ses
 {
 
-// Passes the input through untouched and adds the repetition(s) on top.
+enum class UiMode { Easy, Pro };
+
+// Passes the input through untouched and adds the repetitions on top.
 // The scene document and the decoded source live on the message thread; the
 // audio thread only sees immutable PlaybackPlans handed over lock-free.
 class SpatialEchoProcessor final : public juce::AudioProcessor
@@ -31,6 +36,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return false; }
@@ -49,10 +55,23 @@ public:
 
     juce::AudioProcessorValueTreeState& getParameters() noexcept { return parameters; }
 
-    // Thread-safe copies; never call from the audio thread.
+    // ---- Document (never call from the audio thread) -----------------------
+
+    // Full copy including embedded audio bytes (save/export; can be large).
     Document getDocument() const;
+    // Replaces everything and reloads the source audio from the document.
     void setDocument (Document);
     juce::StringArray getLastLoadWarnings() const;
+
+    // Cheap copy for the UI: embedded audio bytes are left out.
+    Scene getSceneForUi() const;
+    // Edits the active scene and republishes the plan (sample re-rendered only
+    // if the source or trim changed). Bumps the document version.
+    void editScene (const std::function<void (Scene&)>&);
+    juce::uint32 getDocumentVersion() const noexcept { return documentVersion.load(); }
+
+    juce::Result saveSceneFile (const juce::File&) const;
+    juce::Result loadSceneFile (const juce::File&);
 
     struct SourceStatus
     {
@@ -65,44 +84,67 @@ public:
         juce::String message;  // last error or warning, empty if none
     };
 
-    // Message thread.
     juce::Result loadSourceFile (const juce::File&);
     juce::Result loadSourceBytes (const juce::MemoryBlock& wavBytes, const juce::String& originalPath);
     SourceStatus getSourceStatus() const;
-    void requestPreview() noexcept { previewRequested.store (true); }
+    std::shared_ptr<const DecodedAudio> getSourceAudio() const;
+
+    void requestPreview() noexcept { previewRequested.store (true); }          // all points, now
+    void requestFragmentPreview() noexcept { fragmentRequested.store (true); } // the fragment once, centred
     // Momentary trigger from the UI: same as an off->on edge of the Trigger
     // parameter, but a click can never be "used up" by leaving the toggle on.
     void requestTrigger() noexcept { triggerRequested.store (true); }
 
     const HostSnapshot& getHostSnapshot() const noexcept { return hostSnapshot; }
     DiagnosticLog& getDiagnostics() noexcept { return diagnostics; }
+    double getCurrentBeat() const noexcept { return currentBeat.load(); }
+
+    UiMode getUiMode() const noexcept { return uiMode.load(); }
+    void setUiMode (UiMode m) noexcept { uiMode.store (m); }
 
 private:
-    void rebuildPlan();
-    void restoreSourceFromDocument();
+    void rebuildPlan();                   // caller must NOT hold documentLock
+    void restoreSourceFromDocument();     // reads/clears embedded bytes of the active scene
+    void takeEmbeddedBytes();             // moves embedded bytes out of `document`
 
     EchoEngine engine;
+    SafetyLimiter limiter;
     PlanExchange<PlaybackPlan> plans;
     std::atomic<double> hostSampleRate { 44100.0 };
-    std::atomic<bool> previewRequested { false };
-    std::atomic<bool> triggerRequested { false };
+    std::atomic<bool> previewRequested { false }, fragmentRequested { false }, triggerRequested { false };
+    std::atomic<double> currentBeat { 0.0 };
+    std::atomic<UiMode> uiMode { UiMode::Easy };
+    bool lastTrigger = false;
     HostSnapshot hostSnapshot;
     DiagnosticLog diagnostics { hostSnapshot };
-    bool lastTrigger = false;
-    std::atomic<float>* mixPercent = nullptr;
-    std::atomic<float>* triggerValue = nullptr;
-    juce::SmoothedValue<float> wetLevel { 0.7f };
-
-    std::shared_ptr<const DecodedAudio> source;  // guarded by documentLock
-    juce::String sourceMessage;                  // guarded by documentLock
 
     juce::AudioProcessorValueTreeState parameters;
     std::atomic<float>* outputDb = nullptr;
+    std::atomic<float>* mixPercent = nullptr;
+    std::atomic<float>* triggerValue = nullptr;
+    std::atomic<float>* bypassValue = nullptr;
+    std::atomic<float>* protectValue = nullptr;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outputGain { 1.0f };
+    juce::SmoothedValue<float> wetLevel { 0.7f };
+    juce::SmoothedValue<float> bypassMix { 0.0f };
+    juce::AudioBuffer<float> dryCopy;  // preallocated in prepareToPlay
 
+    // Message-thread state, guarded by documentLock.
     mutable juce::CriticalSection documentLock;
-    Document document;
+    Document document;                   // embeddedData of the active scene kept in `embeddedBytes`
+    juce::MemoryBlock embeddedBytes;
     juce::StringArray lastLoadWarnings;
+    std::shared_ptr<const DecodedAudio> source;
+    juce::String sourceMessage;
+    std::atomic<juce::uint32> documentVersion { 1 };
+
+    // Rendered fragment cache (message thread, guarded by planLock).
+    juce::CriticalSection planLock;
+    SharedSample renderedSample, previousSample;
+    const DecodedAudio* renderedFrom = nullptr;
+    juce::int64 renderedTrimStart = -1, renderedTrimEnd = -1;
+    double renderedRate = 0.0;
+    juce::uint32 sampleChangedAtMs = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpatialEchoProcessor)
 };

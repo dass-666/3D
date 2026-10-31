@@ -16,11 +16,12 @@ PlaybackPlan plan1 (double sr, double beat)
 {
     PlaybackPlan p;
     p.sampleRate = sr;
-    p.sample.setSize (1, 2000);
+    auto buf = std::make_shared<SampleBuffer> (1, 2000);
     for (int i = 0; i < 2000; ++i)
-        p.sample.setSample (0, i, 0.5f);
+        buf->setSample (0, i, 0.5f);
+    p.sample = buf;
     p.gridBeats = 1.0;
-    p.echoes.push_back ({ beat, 1.0f });
+    p.echoes.push_back ({ 1, beat, {} });
     return p;
 }
 

@@ -39,9 +39,9 @@ PlaybackPlan makePlan (double sr, int length, double beat, double grid = 1.0, fl
 {
     PlaybackPlan p;
     p.sampleRate = sr;
-    p.sample = constant (channels, length, 0.5f);
+    p.sample = std::make_shared<const SampleBuffer> (constant (channels, length, 0.5f));
     p.gridBeats = grid;
-    p.echoes.push_back ({ beat, gain });
+    p.echoes.push_back ({ 1, beat, { gain, gain, 1.0f } });
     return p;
 }
 
@@ -237,7 +237,11 @@ TEST_CASE ("Stereo fragment keeps its channels; mono output gets the average")
     EchoEngine e;
     e.prepare (48000.0);
     auto plan = makePlan (48000.0, 2000, 0.0, 1.0, 1.0f, 2);
-    plan.sample.applyGain (1, 0, 2000, 0.0f);  // right channel silent
+    {
+        auto copy = std::make_shared<SampleBuffer> (*plan.sample);
+        copy->applyGain (1, 0, 2000, 0.0f);  // right channel silent
+        plan.sample = copy;
+    }
 
     juce::AudioBuffer<float> stereo (2, 1024);
     stereo.clear();
@@ -279,10 +283,10 @@ TEST_CASE ("Resampling keeps the duration")
     CHECK (out.getSample (0, 24000) == Catch::Approx (0.5f).margin (1.0e-4));
 }
 
-TEST_CASE ("Plan uses the first enabled point and the scene trim")
+TEST_CASE ("Plan: one echo per enabled point, solo, placement and the scene trim")
 {
     auto scene = makeDemoScene();
-    scene.points[0].enabled = false;  // point 2 (Agudo, 85 %, beat 2) becomes the echo
+    scene.points[0].enabled = false;  // muted
     scene.source.trimStart = 100;
     scene.source.trimEnd = 600;
 
@@ -290,13 +294,58 @@ TEST_CASE ("Plan uses the first enabled point and the scene trim")
     src.sampleRate = 48000.0;
     src.buffer = constant (1, 1000, 0.5f);
 
-    const auto plan = buildPlan (scene, &src, 48000.0);
+    auto plan = buildPlan (scene, &src, 48000.0);
     REQUIRE (plan != nullptr);
+    REQUIRE (plan->echoes.size() == 3);
+    CHECK (plan->sample->getNumSamples() == 500);
+    CHECK (plan->find (keyForPoint (scene.points[0].id)) == nullptr);
+
+    // Point 2 (Agudo) is at x=82 -> right of centre: right gain = level, left lower.
+    auto* p2 = plan->find (keyForPoint (scene.points[1].id));
+    REQUIRE (p2 != nullptr);
+    CHECK (p2->beat == 2.0);
+    CHECK (p2->placement.gainR > p2->placement.gainL);
+    CHECK (p2->placement.gainR <= 0.85f);
+
+    scene.points[2].solo = true;
+    plan = buildPlan (scene, &src, 48000.0);
     REQUIRE (plan->echoes.size() == 1);
-    CHECK (plan->echoes[0].beat == 2.0);
-    CHECK (plan->echoes[0].gain == Catch::Approx (0.85f));
-    CHECK (plan->sample.getNumSamples() == 500);
+    CHECK (plan->echoes[0].key == keyForPoint (scene.points[2].id));
+
     CHECK (buildPlan (scene, nullptr, 48000.0) == nullptr);
+}
+
+TEST_CASE ("Placement: centre is unity, pan is monotonic, depth darkens and lowers")
+{
+    Point p;
+    p.position = { 50, 50 };
+    auto c = placementFor (p, 48000.0);
+    CHECK (c.gainL == Catch::Approx (1.0f));
+    CHECK (c.gainR == Catch::Approx (1.0f));
+    CHECK (c.lowpassCoef == 1.0f);
+
+    float prevL = 2.0f, prevR = -1.0f;
+    for (double x = 0; x <= 100; x += 10)
+    {
+        p.position = { x, 50 };
+        const auto pl = placementFor (p, 48000.0);
+        CHECK (pl.gainL <= prevL + 1e-6f);
+        CHECK (pl.gainR >= prevR - 1e-6f);
+        CHECK (pl.gainL <= 1.0f);
+        CHECK (pl.gainR <= 1.0f);
+        prevL = pl.gainL;
+        prevR = pl.gainR;
+    }
+    p.position = { 0, 50 };
+    CHECK (placementFor (p, 48000.0).gainR == Catch::Approx (0.0f).margin (1e-6));
+
+    p.position = { 50, 0 };  // far in front
+    const auto front = placementFor (p, 48000.0);
+    p.position = { 50, 100 };  // far behind
+    const auto back = placementFor (p, 48000.0);
+    CHECK (front.gainL < 0.6f);
+    CHECK (front.lowpassCoef < 1.0f);
+    CHECK (back.lowpassCoef < front.lowpassCoef);  // behind is darker
 }
 
 TEST_CASE ("PlanExchange frees retired plans only when the audio thread is done")
