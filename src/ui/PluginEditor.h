@@ -1,16 +1,22 @@
 #pragma once
 
-// Minimal B2 editor: load a WAV, preview, and the global controls. The Easy
-// Mode map and timeline replace this in later blocks.
+// Main window: header, audio editor (waveform + fragment), spatial map (where),
+// point panel, timeline (when). Easy and Pro share the same state and engine.
 
-#include "plugin/PluginProcessor.h"
-
-#include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/EditorContext.h"
+#include "ui/HeaderBar.h"
+#include "ui/PointPanel.h"
+#include "ui/SpatialMap.h"
+#include "ui/Theme.h"
+#include "ui/TimelineView.h"
+#include "ui/WaveformView.h"
 
 namespace ses
 {
 
-class SpatialEchoEditor final : public juce::AudioProcessorEditor, private juce::Timer
+class SpatialEchoEditor final : public juce::AudioProcessorEditor,
+                                private juce::Timer,
+                                private EditorContext::Listener
 {
 public:
     explicit SpatialEchoEditor (SpatialEchoProcessor&);
@@ -19,24 +25,43 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    EditorContext& getContext() noexcept { return ctx; }
+    SpatialMap& getMap() noexcept { return map; }
+    TimelineView& getTimeline() noexcept { return timeline; }
+    WaveformView& getWaveform() noexcept { return waveform; }
+
 private:
     void timerCallback() override;
-    void chooseFile();
-    void refreshStatus();
+    void sceneChanged() override { refreshAudioInfo(); }
+    void selectionChanged() override { refreshToolbar(); }
+    void setProMode (bool);
+    void chooseWav();
+    void loadWav (const juce::File&);
+    void refreshAudioInfo();
+    void refreshToolbar();
+    void refreshDiagnostics();
 
     SpatialEchoProcessor& processor;
+    theme::LookAndFeel lnf;
+    EditorContext ctx;
+    juce::TooltipWindow tooltips { this, 600 };
 
-    juce::TextButton loadButton { "Cargar WAV..." };
-    juce::TextButton previewButton { "Vista previa" };
-    juce::TextButton triggerButton { "Disparar" };
-    juce::Label statusLabel, noteLabel, mixLabel, outputLabel;
-    juce::Slider mixSlider, outputSlider;
+    HeaderBar header;
+    WaveformView waveform;
+    SpatialMap map;
+    PointPanel pointPanel;
+    TimelineView timeline;
 
-    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    std::unique_ptr<SliderAttachment> mixAttachment, outputAttachment;
+    juce::TextButton loadButton { "Cargar WAV" }, fragmentButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Fragmento") };
+    juce::Label audioInfo, fragmentInfo;
+    juce::TextButton addButton { juce::String::fromUTF8 ("+ A\xc3\xb1" "adir") }, duplicateButton { "Duplicar" },
+        muteButton { "Silenciar" }, deleteButton { "Eliminar" };
+    juce::Label countLabel, footer, diagnosticsLabel;
+    juce::ToggleButton logToggle { juce::String::fromUTF8 ("Registro de diagn\xc3\xb3stico") };
     std::unique_ptr<juce::FileChooser> chooser;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpatialEchoEditor)
+    juce::Rectangle<int> audioPanel, mapPanel;
+    int timerTicks = 0;
 };
 
 } // namespace ses

@@ -8,6 +8,7 @@
 
 #include <juce_events/juce_events.h>
 
+#include <array>
 #include <atomic>
 
 namespace ses
@@ -26,8 +27,13 @@ struct HostSnapshot
     std::atomic<bool> usedHostTimeline { false }, ppqDerived { false };
     std::atomic<int> activeVoices { 0 };
     std::atomic<float> limiterGainDb { 0.0f };
+    std::atomic<double> referenceBeat { 0.0 };
+    std::atomic<int> references { 0 };
+    static constexpr int kMaxKeys = 32;
+    std::array<std::atomic<juce::uint64>, kMaxKeys> soundingKeys {};
 
-    void store (const TransportInfo&, int numSamples, const EngineStats&, int voices) noexcept;
+    void store (const TransportInfo&, int numSamples, const EngineStats&, const EchoEngine&) noexcept;
+    bool isSounding (juce::uint64 key) const noexcept;
 };
 
 class DiagnosticLog final : private juce::Timer

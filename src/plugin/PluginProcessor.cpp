@@ -171,7 +171,7 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         bypassMix.skip (n);
     }
 
-    hostSnapshot.store (transport, n, engine.stats(), engine.numActiveVoices());
+    hostSnapshot.store (transport, n, engine.stats(), engine);
 }
 
 juce::AudioProcessorEditor* SpatialEchoProcessor::createEditor()
@@ -253,7 +253,7 @@ void SpatialEchoProcessor::rebuildPlan()
 
     const juce::ScopedLock pl (planLock);
     const bool needRender = src.get() != renderedFrom || scene.source.trimStart != renderedTrimStart
-                            || scene.source.trimEnd != renderedTrimEnd || rate != renderedRate;
+                            || scene.source.trimEnd != renderedTrimEnd || ! juce::exactlyEqual (rate, renderedRate);
     const auto now = juce::Time::getMillisecondCounter();
     if (needRender)
     {

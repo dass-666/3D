@@ -325,10 +325,16 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
             ++engineStats.triggers;
             engineStats.lastTriggerBeat = blockStart;
             engineStats.lastScheduledBeat = ref;
+            engineStats.lastReferenceBeat = ref;
+            ++engineStats.references;
             schedule (*plan, ref);
         }
         if (previewScene)
+        {
+            engineStats.lastReferenceBeat = blockStart;
+            ++engineStats.references;
             schedule (*plan, blockStart);
+        }
         if (previewFragment)
             addPending (blockStart, 0);
     }

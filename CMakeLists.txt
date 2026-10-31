@@ -43,6 +43,12 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/SourceAudio.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Theme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/HeaderBar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/WaveformView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialMap.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PointPanel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TimelineView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Diagnostics.cpp)

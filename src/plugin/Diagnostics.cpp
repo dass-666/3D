@@ -3,8 +3,27 @@
 namespace ses
 {
 
-void HostSnapshot::store (const TransportInfo& t, int numSamples, const EngineStats& s, int voices) noexcept
+bool HostSnapshot::isSounding (juce::uint64 key) const noexcept
 {
+    for (auto& k : soundingKeys)
+        if (k.load (std::memory_order_relaxed) == key)
+            return true;
+    return false;
+}
+
+void HostSnapshot::store (const TransportInfo& t, int numSamples, const EngineStats& s, const EchoEngine& engine) noexcept
+{
+    const int voices = engine.numActiveVoices();
+    int k = 0;
+    engine.forEachActiveKey ([&] (juce::uint64 key)
+    {
+        if (k < kMaxKeys)
+            soundingKeys[(size_t) k++].store (key == 0 ? ~juce::uint64 (0) : key, std::memory_order_relaxed);
+    });
+    for (; k < kMaxKeys; ++k)
+        soundingKeys[(size_t) k].store (0, std::memory_order_relaxed);
+    referenceBeat.store (s.lastReferenceBeat, std::memory_order_relaxed);
+    references.store (s.references, std::memory_order_relaxed);
     constexpr auto r = std::memory_order_relaxed;
     hasBpm.store (t.bpm.has_value(), r);
     bpm.store (t.bpm.value_or (0.0), r);

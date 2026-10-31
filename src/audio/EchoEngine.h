@@ -85,6 +85,8 @@ struct EngineStats
     double lastJumpBeats = 0.0;
     double maxJitterBeats = 0.0;  // largest host-vs-predicted difference accepted as jitter
     double lastTriggerBeat = 0.0, lastScheduledBeat = 0.0, lastFiredBeat = 0.0;
+    double lastReferenceBeat = 0.0;  // timeline beat that the points' beats count from (last trigger/preview)
+    int references = 0;              // bumps on every trigger/preview
     bool usedHostTimeline = false;
     bool ppqDerivedFromSamples = false;
 };
@@ -113,6 +115,13 @@ public:
                   bool previewFragment = false) noexcept;
 
     int numActiveVoices() const noexcept;
+    // Keys of the sounding voices (0 = fragment preview), for UI feedback.
+    template <typename Fn> void forEachActiveKey (Fn&& fn) const noexcept
+    {
+        for (auto& v : voices)
+            if (v.active && ! v.releasing)
+                fn (v.key);
+    }
     int numPendingEvents() const noexcept;
     double lastBpmUsed() const noexcept { return bpmUsed; }
     double currentBeat() const noexcept { return lastBlockStart; }

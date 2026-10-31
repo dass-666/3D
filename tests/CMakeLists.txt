@@ -10,6 +10,7 @@ add_executable(ses_tests
     PluginStateTests.cpp
     TransportTests.cpp
     MultiPointTests.cpp
+    EditorTests.cpp
     EngineTests.cpp)
 
 target_link_libraries(ses_tests PRIVATE
