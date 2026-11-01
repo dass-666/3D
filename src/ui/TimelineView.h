@@ -38,6 +38,9 @@ private:
         bool enabled = true;
         double beat = 0.0, lengthBeats = 0.0;
         int lane = 0;
+        std::vector<double> sliceOffsets;  // stutter slices, beats after `beat`
+        double sliceBeats = 0.0;
+        bool pitchPending = false;
     };
 
     void sceneChanged() override { layoutBlocks(); repaint(); }

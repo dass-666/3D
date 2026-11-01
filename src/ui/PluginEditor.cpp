@@ -102,6 +102,13 @@ void SpatialEchoEditor::timerCallback()
     timeline.updatePlayhead();
     if (++timerTicks % 8 == 0)
     {
+        pointPanel.refreshPending();
+        const int pend = processor.numPendingPitchRenders();
+        if (pend != lastPendingRenders)
+        {
+            lastPendingRenders = pend;
+            timeline.setProMode (processor.getUiMode() == UiMode::Pro);  // relayout blocks (pending markers)
+        }
         refreshAudioInfo();
         if (diagnosticsLabel.isVisible())
             refreshDiagnostics();
@@ -120,6 +127,8 @@ void SpatialEchoEditor::refreshAudioInfo()
         info = "Sin audio cargado";
     if (st.message.isNotEmpty())
         info << "   (" << st.message << ")";
+    if (const int pend = processor.numPendingPitchRenders(); pend > 0)
+        info << u8 ("   \xc2\xb7  procesando tono (") << pend << ")";
     audioInfo.setText (info, juce::dontSendNotification);
     audioInfo.setColour (juce::Label::textColourId, st.message.isNotEmpty() ? theme::amber : theme::textDim);
 
@@ -221,7 +230,7 @@ void SpatialEchoEditor::resized()
     }
     r.removeFromTop (10);
 
-    auto timelineArea = r.removeFromBottom (juce::jlimit (150, 220, r.getHeight() / 3));
+    auto timelineArea = r.removeFromBottom (juce::jlimit (140, 200, r.getHeight() / 4));
     timeline.setBounds (timelineArea);
     r.removeFromBottom (10);
 

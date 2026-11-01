@@ -62,6 +62,7 @@ private:
 
     juce::Rectangle<int> audioPanel, mapPanel;
     int timerTicks = 0;
+    int lastPendingRenders = -1;
 };
 
 } // namespace ses

@@ -79,7 +79,19 @@ void TimelineView::layoutBlocks()
 
     blocks.clear();
     for (auto& p : scene.points)
-        blocks.push_back ({ p.id, p.number, p.enabled, p.timing.beat, fragmentBeats, 0 });
+    {
+        Block b { p.id, p.number, p.enabled, p.timing.beat, fragmentBeats, 0, {}, 0.0, ctx.processor.isPitchPending (p) };
+        if (p.stutter.enabled)
+        {
+            const auto st = clamped (p.stutter);
+            const double div = beatsPerDivision (st.division);
+            b.sliceBeats = div * st.sliceLengthPercent / 100.0;
+            for (int k = 0; k < st.repeats; ++k)
+                b.sliceOffsets.push_back (st.offsetBeats + k * div);
+            b.lengthBeats = st.offsetBeats + (st.repeats - 1) * div + b.sliceBeats;
+        }
+        blocks.push_back (std::move (b));
+    }
     std::sort (blocks.begin(), blocks.end(), [] (auto& a, auto& b) { return a.beat < b.beat || (juce::exactlyEqual (a.beat, b.beat) && a.number < b.number); });
 
     // Greedy lanes: simultaneous / overlapping repetitions stack instead of hiding each other.
@@ -173,8 +185,29 @@ void TimelineView::paint (juce::Graphics& g)
         const auto r = blockRect (b);
         const auto col = theme::pointColour (b.number);
         const bool sel = ctx.isSelected (b.id);
-        g.setColour (b.enabled ? col.withAlpha (sel ? 0.95f : 0.7f) : theme::outline);
-        g.fillRoundedRectangle (r, 4.0f);
+        if (b.sliceOffsets.empty())
+        {
+            g.setColour (b.enabled ? col.withAlpha (sel ? 0.95f : 0.7f) : theme::outline);
+            g.fillRoundedRectangle (r, 4.0f);
+        }
+        else
+        {
+            // Stutter: outline plus one bar per slice.
+            g.setColour (b.enabled ? col.withAlpha (0.25f) : theme::outline.withAlpha (0.5f));
+            g.fillRoundedRectangle (r, 4.0f);
+            g.setColour (b.enabled ? col.withAlpha (sel ? 0.95f : 0.8f) : theme::outline);
+            for (double off : b.sliceOffsets)
+            {
+                const float x0 = xForBeat (b.beat + off);
+                const float x1 = juce::jmax (x0 + 2.0f, xForBeat (b.beat + off + b.sliceBeats) - 1.0f);
+                g.fillRoundedRectangle (juce::Rectangle<float> (x0, r.getY() + 2.0f, x1 - x0, r.getHeight() - 4.0f), 2.0f);
+            }
+        }
+        if (b.pitchPending)
+        {
+            g.setColour (theme::amber);
+            g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ r.getRight() - 6.0f, r.getY() + 6.0f }));
+        }
         if (sel)
         {
             g.setColour (juce::Colours::white);

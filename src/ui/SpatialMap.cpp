@@ -293,6 +293,8 @@ bool SpatialMap::keyPressed (const juce::KeyPress& k)
 void SpatialMap::showMenu (const Point& p)
 {
     juce::PopupMenu m;
+    m.addItem (5, "Disparar esta");
+    m.addSeparator();
     m.addItem (1, "Duplicar");
     m.addItem (2, p.enabled ? "Silenciar" : "Activar");
     m.addItem (3, p.solo ? "Quitar solo" : "Solo");
@@ -309,6 +311,7 @@ void SpatialMap::showMenu (const Point& p)
                          if (r == 2) toggleMuteSelection (c);
                          if (r == 3) c.edit ([id] (Scene& s) { if (auto* q = findPoint (s, id)) q->solo = ! q->solo; });
                          if (r == 4) deleteSelection (c);
+                         if (r == 5) c.processor.requestTriggerPoint (id);
                      });
 }
 

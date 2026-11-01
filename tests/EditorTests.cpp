@@ -83,7 +83,14 @@ TEST_CASE ("Editor: builds, paints, and map/panel/timeline share one model in bo
     CHECK (ctx.selection().isEmpty());
 
     // Edits from the processor side (host restore) reach the editor's cached copy.
-    p.editScene ([] (Scene& s) { s.points[1].timing.beat = 0.0; s.points[3].timing.beat = 2.0; s.points[0].solo = true; });
+    p.editScene ([] (Scene& s)
+    {
+        s.points[1].timing.beat = 0.0;
+        s.points[3].timing.beat = 2.0;
+        s.points[0].solo = true;
+        s.points[2].stutter.enabled = true;  // slices visible on the timeline
+        s.points[2].stutter.repeats = 6;
+    });
     ctx.refreshIfChanged();
     CHECK (ctx.scene().points[1].timing.beat == 0.0);
 
