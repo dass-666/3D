@@ -62,7 +62,97 @@ Position clamped (Position p)
 Timing clamped (Timing t)
 {
     t.beat = std::clamp (t.beat, limits::minBeat, limits::maxBeat);
+    t.seconds = std::clamp (t.seconds, limits::minSeconds, limits::maxSeconds);
     return t;
+}
+
+PlayRegion clamped (PlayRegion r)
+{
+    r.start = std::clamp (r.start, 0.0, 1.0);
+    r.end = std::clamp (r.end, r.start, 1.0);
+    return r;
+}
+
+juce::String toString (TimeMode m) { return m == TimeMode::Free ? "free" : "beats"; }
+
+std::optional<TimeMode> timeModeFromString (const juce::String& s)
+{
+    if (s == "beats") return TimeMode::Beats;
+    if (s == "free")  return TimeMode::Free;
+    return std::nullopt;
+}
+
+juce::String toString (ShaperSettings::Shape s)
+{
+    switch (s)
+    {
+        case ShaperSettings::Shape::Square:   return "square";
+        case ShaperSettings::Shape::Triangle: return "triangle";
+        case ShaperSettings::Shape::Saw:      return "saw";
+    }
+    return "square";
+}
+
+std::optional<ShaperSettings::Shape> shaperShapeFromString (const juce::String& s)
+{
+    if (s == "square")   return ShaperSettings::Shape::Square;
+    if (s == "triangle") return ShaperSettings::Shape::Triangle;
+    if (s == "saw")      return ShaperSettings::Shape::Saw;
+    return std::nullopt;
+}
+
+juce::String toString (ShaperSettings::RateMode m)
+{
+    switch (m)
+    {
+        case ShaperSettings::RateMode::Count:        return "count";
+        case ShaperSettings::RateMode::Milliseconds: return "ms";
+        case ShaperSettings::RateMode::Division:     return "division";
+    }
+    return "count";
+}
+
+std::optional<ShaperSettings::RateMode> shaperRateModeFromString (const juce::String& s)
+{
+    if (s == "count")    return ShaperSettings::RateMode::Count;
+    if (s == "ms")       return ShaperSettings::RateMode::Milliseconds;
+    if (s == "division") return ShaperSettings::RateMode::Division;
+    return std::nullopt;
+}
+
+ShaperSettings clamped (ShaperSettings s)
+{
+    s.cuts = std::clamp (s.cuts, limits::minShaperCuts, limits::maxShaperCuts);
+    s.periodMs = std::clamp (s.periodMs, limits::minShaperPeriodMs, limits::maxShaperPeriodMs);
+    s.depthPercent = std::clamp (s.depthPercent, 0.0, 100.0);
+    s.openPercent = std::clamp (s.openPercent, 5.0, 95.0);
+    s.fadeMs = std::clamp (s.fadeMs, 0.0, limits::maxShaperFadeMs);
+    s.accelPercent = std::clamp (s.accelPercent, 0.0, 100.0);
+    s.regionStart = std::clamp (s.regionStart, 0.0, 1.0);
+    s.regionEnd = std::clamp (s.regionEnd, s.regionStart, 1.0);
+    return s;
+}
+
+const std::vector<ShaperPreset>& shaperPresets()
+{
+    static const std::vector<ShaperPreset> presets = []
+    {
+        std::vector<ShaperPreset> v;
+        auto add = [&] (const char* id, const char* name, auto&& fn)
+        {
+            ShaperSettings s;
+            s.enabled = true;
+            fn (s);
+            v.push_back ({ id, name, clamped (s) });
+        };
+        add ("gate", "Gate", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Square; s.cuts = 8; s.depthPercent = 100; s.openPercent = 50; });
+        add ("tremolo", "Tremolo", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Triangle; s.rateMode = ShaperSettings::RateMode::Milliseconds; s.periodMs = 120; s.depthPercent = 60; });
+        add ("trance-gate", "Trance Gate", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Square; s.rateMode = ShaperSettings::RateMode::Division; s.division = StutterSettings::Division::Sixteenth; s.depthPercent = 100; s.openPercent = 50; });
+        add ("accel", "Cortes acelerados", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Square; s.cuts = 12; s.depthPercent = 100; s.openPercent = 50; s.accelPercent = 70; });
+        add ("fade-end", "Fade final", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Saw; s.cuts = 2; s.depthPercent = 100; s.wholeVoice = false; s.regionStart = 0.5; s.regionEnd = 1.0; s.fadeMs = 10; });
+        return v;
+    }();
+    return presets;
 }
 
 SoundSettings clamped (SoundSettings s)
@@ -113,10 +203,14 @@ int nextPointNumber (const Scene& scene)
 Timing nextFreeTiming (const Scene& scene)
 {
     const auto step = beatsPerStep (scene.rhythm);
-    double latest = 0.0;
+    double latest = 0.0, latestSeconds = 0.0;
     for (auto& p : scene.points)
+    {
         latest = std::max (latest, p.timing.beat);
-    return clamped (Timing { latest + step });
+        latestSeconds = std::max (latestSeconds, p.timing.seconds);
+    }
+    // Free time has no tempo: one step at 120 BPM.
+    return clamped (Timing { latest + step, latestSeconds + step * 0.5 });
 }
 
 std::optional<juce::String> addPoint (Scene& scene, Position pos, std::optional<Timing> timing,
@@ -164,7 +258,8 @@ std::optional<juce::String> duplicatePoint (Scene& scene, const juce::String& id
     Point copy = *src;
     copy.id = makeId();
     copy.number = nextPointNumber (scene);
-    copy.timing = clamped (Timing { src->timing.beat + beatsPerStep (scene.rhythm) });
+    const auto step = beatsPerStep (scene.rhythm);
+    copy.timing = clamped (Timing { src->timing.beat + step, src->timing.seconds + step * 0.5 });
     copy.position = clamped (Position { src->position.x + 5.0, src->position.y });
 
     scene.points.push_back (copy);  // may invalidate src; not used after this
@@ -214,6 +309,48 @@ bool setGainDb (Scene& scene, const juce::String& id, double gainDb)
         return true;
     }
     return false;
+}
+
+bool setShaper (Scene& scene, const juce::String& id, ShaperSettings sh)
+{
+    if (auto* p = findPoint (scene, id))
+    {
+        p->shaper = clamped (sh);
+        return true;
+    }
+    return false;
+}
+
+bool setRegion (Scene& scene, const juce::String& id, PlayRegion r)
+{
+    if (auto* p = findPoint (scene, id))
+    {
+        p->region = clamped (r);
+        return true;
+    }
+    return false;
+}
+
+void setTimeMode (Scene& scene, TimeMode mode, double bpm)
+{
+    if (scene.timeMode == mode)
+        return;
+    const double secondsPerBeat = 60.0 / std::clamp (bpm, 20.0, 999.0);
+    for (auto& p : scene.points)
+    {
+        if (mode == TimeMode::Free)
+            p.timing.seconds = p.timing.beat * secondsPerBeat;
+        else
+            p.timing.beat = p.timing.seconds / secondsPerBeat;
+        p.timing = clamped (p.timing);
+    }
+    scene.timeMode = mode;
+}
+
+double momentSeconds (const Scene& scene, const Point& p, double bpm)
+{
+    return scene.timeMode == TimeMode::Free ? p.timing.seconds
+                                            : p.timing.beat * 60.0 / std::clamp (bpm, 20.0, 999.0);
 }
 
 bool setStutter (Scene& scene, const juce::String& id, StutterSettings st)

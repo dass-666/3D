@@ -41,7 +41,12 @@ struct PlannedEcho
     juce::uint64 key = 0;     // stable per point (hash of its id); 0 is reserved for the fragment preview
     int index = 0;            // 0 = the repetition, 1.. = stutter slices
     double pointBeat = 0.0;   // the point's moment (quarter notes after the trigger)
-    double beat = 0.0;        // when this echo starts (>= pointBeat)
+    double beat = 0.0;        // when this echo starts (>= pointBeat), beats after the reference
+    // Free time: the point's moment is `seconds` after the reference instead of
+    // pointBeat (tempo changes do not move it); `beat` then holds only the
+    // stutter offset (beat - pointBeat).
+    bool freeTime = false;
+    double seconds = 0.0;
     SharedSample sample;      // buffer to play (base or pitched copy)
     bool pitchPending = false;  // true while the pitched copy is still rendering (base plays instead)
     // Slice of `sample` to play, in samples. sliceBeats > 0 limits the length
@@ -50,7 +55,14 @@ struct PlannedEcho
     double sliceBeats = 0.0;
     bool alignEnd = false;
     Placement placement;
+    ShaperSettings shaper;   // volume curve on top (enabled or not)
 };
+
+// Volume Shaper evaluation (pure; shared by the engine and the UI preview).
+// `t` and `length` in seconds from the start of the voice; `periodSeconds`
+// is only used by the Division mode (tempo in force). Returns 0..1 before
+// anticlick smoothing.
+float shaperGain (const ShaperSettings&, double t, double length, double divisionSeconds) noexcept;
 
 // Everything the audio thread needs, rendered at the host sample rate.
 // Immutable once published.
@@ -108,6 +120,7 @@ struct EngineStats
     double maxJitterBeats = 0.0;  // largest host-vs-predicted difference accepted as jitter
     double lastTriggerBeat = 0.0, lastScheduledBeat = 0.0, lastFiredBeat = 0.0;
     double lastReferenceBeat = 0.0;  // timeline beat that the points' beats count from (last trigger/preview)
+    double lastReferenceSeconds = 0.0;  // same moment on the engine's sample clock, in seconds
     int references = 0;              // bumps on every trigger/preview
     bool usedHostTimeline = false;
     bool ppqDerivedFromSamples = false;
@@ -160,6 +173,7 @@ public:
     int numPendingEvents() const noexcept;
     double lastBpmUsed() const noexcept { return bpmUsed; }
     double currentBeat() const noexcept { return lastBlockStart; }
+    double currentSeconds() const noexcept { return sampleClock / sampleRate; }
     const EngineStats& stats() const noexcept { return engineStats; }
 
 private:
@@ -174,21 +188,23 @@ private:
         float z[2] {};                 // lowpass state
         float release = 1.0f;          // < 1 while fading out
         bool releasing = false;
+        float shaperEnv = 1.0f;        // smoothed Volume Shaper gain
     };
 
     struct Pending
     {
         bool active = false;
         double referenceBeat = 0.0;    // trigger moment; the echo's beat is looked up live
+        double referenceSample = 0.0;  // the same moment on the sample clock (free time)
         juce::uint64 key = 0;
         int index = 0;
     };
 
-    void schedule (const PlaybackPlan&, double referenceBeat, juce::uint64 onlyKey = 0) noexcept;
-    void addPending (double referenceBeat, juce::uint64 key, int index) noexcept;
+    void schedule (const PlaybackPlan&, double referenceBeat, double referenceSample, juce::uint64 onlyKey = 0) noexcept;
+    void addPending (double referenceBeat, double referenceSample, juce::uint64 key, int index) noexcept;
     bool startVoice (const PlannedEcho&, int offsetInBlock, juce::AudioBuffer<float>&, const PlaybackPlan&,
                      double beatsPerSample) noexcept;
-    void renderVoice (Voice&, juce::AudioBuffer<float>&, int start, int end, const PlaybackPlan&) noexcept;
+    void renderVoice (Voice&, juce::AudioBuffer<float>&, int start, int end, const PlaybackPlan&, double beatsPerSample) noexcept;
     void cancelPending() noexcept;
 
     double sampleRate = 44100.0;
@@ -201,6 +217,7 @@ private:
     bool onHostTimeline = false;
     double internalBeat = 0.0;
     double lastBlockStart = 0.0;
+    double sampleClock = 0.0;  // samples processed since prepare(); free-time echoes count on it
     std::optional<double> expectedHostBeat;
     EngineStats engineStats;
 

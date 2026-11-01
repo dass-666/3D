@@ -43,12 +43,27 @@ struct Position
     bool operator== (const Position&) const = default;
 };
 
-// When the repetition plays, in quarter notes after the trigger (>= 0).
+// When the repetition plays, after the trigger (>= 0). The scene's TimeMode
+// says which field is in force: `beat` (quarter notes, follows the host tempo)
+// or `seconds` (free time, unaffected by tempo changes).
 struct Timing
 {
     double beat = 0.0;
+    double seconds = 0.0;
     bool operator== (const Timing&) const = default;
 };
+
+enum class TimeMode { Beats, Free };
+juce::String toString (TimeMode);
+std::optional<TimeMode> timeModeFromString (const juce::String&);
+
+// Part of the fragment a repetition plays (non-destructive), as fractions.
+struct PlayRegion
+{
+    double start = 0.0, end = 1.0;
+    bool operator== (const PlayRegion&) const = default;
+};
+PlayRegion clamped (PlayRegion);
 
 // What a voice preset controls. Volume is intentionally NOT here: applying a
 // preset to several points must not change their mix balance.
@@ -64,6 +79,10 @@ namespace limits
 {
     inline constexpr double minCoord = 0.0, maxCoord = 100.0;
     inline constexpr double minBeat = 0.0, maxBeat = 1024.0;
+    inline constexpr double minSeconds = 0.0, maxSeconds = 600.0;
+    inline constexpr int minShaperCuts = 2, maxShaperCuts = 32;
+    inline constexpr double minShaperPeriodMs = 10.0, maxShaperPeriodMs = 4000.0;
+    inline constexpr double maxShaperFadeMs = 50.0;
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
     inline constexpr double minCharacter = 0.0, maxCharacter = 100.0;
     inline constexpr double minSpeed = 50.0, maxSpeed = 200.0;
@@ -113,6 +132,44 @@ juce::String toString (StutterSettings::Region);
 std::optional<StutterSettings::Region> stutterRegionFromString (const juce::String&);
 StutterSettings clamped (StutterSettings);
 
+// Volume Shaper: a periodic volume curve (like a drawn FL Studio automation)
+// applied on top of the repetition, independent of Stutter. Count mode spaces
+// `cuts` cuts evenly over the region (tempo-independent); Milliseconds and
+// Division modes use a fixed period.
+struct ShaperSettings
+{
+    enum class Shape { Square, Triangle, Saw };
+    enum class RateMode { Count, Milliseconds, Division };
+
+    bool enabled = false;
+    Shape shape = Shape::Square;
+    RateMode rateMode = RateMode::Count;
+    int cuts = 8;                       // Count mode: 2..32 cuts over the region
+    double periodMs = 125.0;            // Milliseconds mode: 10..4000
+    StutterSettings::Division division = StutterSettings::Division::Sixteenth;  // Division mode
+    double depthPercent = 100.0;        // 0..100: how far the closed part drops
+    double openPercent = 50.0;          // 5..95: part of each period that stays open (square)
+    double fadeMs = 3.0;                // 0..50: anticlick smoothing of the edges
+    double accelPercent = 0.0;          // 0..100: Count mode only, later cuts get shorter
+    bool wholeVoice = true;             // false = only regionStart..regionEnd (fractions of the repetition)
+    double regionStart = 0.0, regionEnd = 1.0;
+    bool operator== (const ShaperSettings&) const = default;
+};
+
+juce::String toString (ShaperSettings::Shape);
+std::optional<ShaperSettings::Shape> shaperShapeFromString (const juce::String&);
+juce::String toString (ShaperSettings::RateMode);
+std::optional<ShaperSettings::RateMode> shaperRateModeFromString (const juce::String&);
+ShaperSettings clamped (ShaperSettings);
+
+struct ShaperPreset
+{
+    const char* id;
+    const char* name;
+    ShaperSettings settings;
+};
+const std::vector<ShaperPreset>& shaperPresets();
+
 struct Point
 {
     juce::String id;     // stable identity: never reused, independent of number and timing
@@ -121,10 +178,12 @@ struct Point
     bool solo = false;     // if any enabled point is soloed, only soloed points play
     Position position;
     Timing timing;
+    PlayRegion region;             // which part of the fragment this repetition plays
     VoiceRef voice;
     SoundSettings sound;
     double gainDb = 0.0;           // -36..+12 dB, independent of pitch and of the global Output
     StutterSettings stutter;
+    ShaperSettings shaper;
     bool operator== (const Point&) const = default;
 };
 
@@ -154,6 +213,7 @@ struct Scene
     juce::String id;
     juce::String name;
     RhythmDivision rhythm = RhythmDivision::Quarter;
+    TimeMode timeMode = TimeMode::Beats;
     double mixPercent = 70.0;
     SpatialMode spatialMode = SpatialMode::Stereo;
     int maxPoints = kDefaultMaxPoints;
@@ -198,6 +258,13 @@ bool setTiming (Scene&, const juce::String& id, Timing);
 bool setSound (Scene&, const juce::String& id, SoundSettings);  // marks voice as modified
 bool setGainDb (Scene&, const juce::String& id, double gainDb);
 bool setStutter (Scene&, const juce::String& id, StutterSettings);
+bool setShaper (Scene&, const juce::String& id, ShaperSettings);
+bool setRegion (Scene&, const juce::String& id, PlayRegion);
+// Switches the scene's time mode, converting every point's moment with `bpm`
+// so nothing moves at that tempo.
+void setTimeMode (Scene&, TimeMode, double bpm);
+// The point's moment in the unit the scene is using, as seconds at `bpm`.
+double momentSeconds (const Scene&, const Point&, double bpm);
 
 // Copies the preset's sound into every listed point. Position, timing,
 // volume, number and id are never touched. Returns how many points changed.

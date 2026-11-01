@@ -12,7 +12,8 @@ add_executable(ses_tests
     MultiPointTests.cpp
     EditorTests.cpp
     PitchStutterTests.cpp
-    EngineTests.cpp)
+    EngineTests.cpp
+    FreeTimeShaperTests.cpp)
 
 target_link_libraries(ses_tests PRIVATE
     ses_shared

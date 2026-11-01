@@ -62,7 +62,13 @@ var pointToVar (const Point& p)
 
     auto timing = obj();
     set (timing, "beat", p.timing.beat);
+    set (timing, "seconds", p.timing.seconds);
     set (o, "timing", timing);
+
+    auto region = obj();
+    set (region, "start", p.region.start);
+    set (region, "end", p.region.end);
+    set (o, "region", region);
 
     auto voice = obj();
     set (voice, "presetId", p.voice.presetId);
@@ -84,6 +90,22 @@ var pointToVar (const Point& p)
     set (st, "offsetBeats", p.stutter.offsetBeats);
     set (st, "gainDb", p.stutter.gainDb);
     set (o, "stutter", st);
+
+    auto sh = obj();
+    set (sh, "enabled", p.shaper.enabled);
+    set (sh, "shape", toString (p.shaper.shape));
+    set (sh, "rateMode", toString (p.shaper.rateMode));
+    set (sh, "cuts", p.shaper.cuts);
+    set (sh, "periodMs", p.shaper.periodMs);
+    set (sh, "division", toString (p.shaper.division));
+    set (sh, "depthPercent", p.shaper.depthPercent);
+    set (sh, "openPercent", p.shaper.openPercent);
+    set (sh, "fadeMs", p.shaper.fadeMs);
+    set (sh, "accelPercent", p.shaper.accelPercent);
+    set (sh, "wholeVoice", p.shaper.wholeVoice);
+    set (sh, "regionStart", p.shaper.regionStart);
+    set (sh, "regionEnd", p.shaper.regionEnd);
+    set (o, "shaper", sh);
     return o;
 }
 
@@ -110,6 +132,7 @@ var sceneToVar (const Scene& s)
     set (o, "id", s.id);
     set (o, "name", s.name);
     set (o, "rhythm", toString (s.rhythm));
+    set (o, "timeMode", toString (s.timeMode));
     set (o, "mixPercent", s.mixPercent);
     set (o, "spatialMode", toString (s.spatialMode));
     set (o, "maxPoints", s.maxPoints);
@@ -206,6 +229,15 @@ struct Reader
 
         const auto timing = o.getProperty ("timing", var());
         p.timing.beat = number (timing, "beat", 0.0, limits::minBeat, limits::maxBeat, where + ".timing");
+        p.timing.seconds = number (timing, "seconds", p.timing.beat * 0.5, limits::minSeconds, limits::maxSeconds, where + ".timing");
+
+        const auto region = o.getProperty ("region", var());
+        if (region.isObject())
+        {
+            p.region.start = number (region, "start", 0.0, 0.0, 1.0, where + ".region");
+            p.region.end = number (region, "end", 1.0, 0.0, 1.0, where + ".region");
+            p.region = clamped (p.region);
+        }
 
         const auto voice = o.getProperty ("voice", var());
         p.voice.presetId = text (voice, "presetId", presetIds::original);
@@ -243,6 +275,35 @@ struct Reader
             x.offsetBeats = number (st, "offsetBeats", 0.0, 0.0, limits::maxBeat, where + ".stutter");
             x.gainDb = number (st, "gainDb", 0.0, limits::minGainDb, limits::maxGainDb, where + ".stutter");
             p.stutter = clamped (x);
+        }
+
+        const auto sh = o.getProperty ("shaper", var());
+        if (sh.isObject())
+        {
+            ShaperSettings x;
+            x.enabled = flag (sh, "enabled", false);
+            if (auto v = shaperShapeFromString (text (sh, "shape", "square")))
+                x.shape = *v;
+            else
+                warnings.add (where + ".shaper.shape: unknown, using square");
+            if (auto v = shaperRateModeFromString (text (sh, "rateMode", "count")))
+                x.rateMode = *v;
+            else
+                warnings.add (where + ".shaper.rateMode: unknown, using count");
+            x.cuts = (int) integer (sh, "cuts", 8, limits::minShaperCuts, limits::maxShaperCuts, where + ".shaper");
+            x.periodMs = number (sh, "periodMs", 125.0, limits::minShaperPeriodMs, limits::maxShaperPeriodMs, where + ".shaper");
+            if (auto d = stutterDivisionFromString (text (sh, "division", "1/16")))
+                x.division = *d;
+            else
+                warnings.add (where + ".shaper.division: unknown, using 1/16");
+            x.depthPercent = number (sh, "depthPercent", 100.0, 0.0, 100.0, where + ".shaper");
+            x.openPercent = number (sh, "openPercent", 50.0, 5.0, 95.0, where + ".shaper");
+            x.fadeMs = number (sh, "fadeMs", 3.0, 0.0, limits::maxShaperFadeMs, where + ".shaper");
+            x.accelPercent = number (sh, "accelPercent", 0.0, 0.0, 100.0, where + ".shaper");
+            x.wholeVoice = flag (sh, "wholeVoice", true);
+            x.regionStart = number (sh, "regionStart", 0.0, 0.0, 1.0, where + ".shaper");
+            x.regionEnd = number (sh, "regionEnd", 1.0, 0.0, 1.0, where + ".shaper");
+            p.shaper = clamped (x);
         }
         return p;
     }
@@ -295,6 +356,11 @@ struct Reader
             s.rhythm = *r;
         else
             warnings.add (where + ".rhythm: unknown value, using 1/4");
+
+        if (auto m = timeModeFromString (text (o, "timeMode", "beats")))
+            s.timeMode = *m;
+        else
+            warnings.add (where + ".timeMode: unknown value, using beats");
 
         s.mixPercent = number (o, "mixPercent", 70.0, limits::minMix, limits::maxMix, where);
 
