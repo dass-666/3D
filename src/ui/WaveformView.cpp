@@ -140,6 +140,60 @@ void WaveformView::paint (juce::Graphics& g)
         g.drawVerticalLine ((int) x, mid - hi * half, mid - lo * half + 1.0f);
     }
 
+    // The selected repetition's own part of the fragment (play region) and its Volume Shaper curve.
+    if (const auto* p = ctx.primaryPoint())
+    {
+        const auto region = clamped (p->region);
+        const auto len = selEnd - selStart;
+        const float rx0 = xFor (selStart + (juce::int64) (region.start * (double) len));
+        const float rx1 = xFor (selStart + (juce::int64) (region.end * (double) len));
+        if (region.start > 0.0 || region.end < 1.0)
+        {
+            g.setColour (theme::pointColour (p->number).withAlpha (0.18f));
+            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (rx0, area.getY(), rx1, area.getBottom()));
+            g.setColour (theme::pointColour (p->number).withAlpha (0.9f));
+            g.drawRect (juce::Rectangle<float>::leftTopRightBottom (rx0, area.getY(), rx1, area.getBottom()), 1.0f);
+        }
+        if (p->shaper.enabled && rx1 > rx0 + 4.0f)
+        {
+            const double voiceSeconds = (region.end - region.start) * (double) len / audio->sampleRate;
+            const auto& snapH = ctx.processor.getHostSnapshot();
+            const double bpm = snapH.hasBpm.load() ? snapH.bpm.load() : 120.0;
+            const double divisionSeconds = beatsPerDivision (p->shaper.division) * 60.0 / bpm;
+            juce::Path path;
+            const int steps = juce::jmax (16, (int) (rx1 - rx0));
+            for (int i = 0; i <= steps; ++i)
+            {
+                const double t = voiceSeconds * i / steps;
+                const float gN = shaperGain (p->shaper, juce::jmin (t, voiceSeconds * 0.99999), voiceSeconds, divisionSeconds);
+                const float px = rx0 + (rx1 - rx0) * (float) i / (float) steps;
+                const float py = area.getBottom() - 2.0f - (area.getHeight() - 4.0f) * gN;
+                i == 0 ? path.startNewSubPath (px, py) : path.lineTo (px, py);
+            }
+            g.setColour (juce::Colours::white.withAlpha (0.85f));
+            g.strokePath (path, juce::PathStrokeType (1.5f));
+        }
+    }
+
+    // Time ruler (seconds) along the bottom edge.
+    {
+        const double viewSeconds = (double) (viewEnd - viewStart) / audio->sampleRate;
+        double stepS = 1.0;
+        for (double cand : { 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0 })
+            if (viewSeconds / cand <= 14.0) { stepS = cand; break; }
+        const double first = std::ceil ((double) viewStart / audio->sampleRate / stepS) * stepS;
+        g.setFont (theme::font (10.0f));
+        for (double t = first; t * audio->sampleRate <= (double) viewEnd; t += stepS)
+        {
+            const float x = xFor ((juce::int64) (t * audio->sampleRate));
+            g.setColour (theme::outline);
+            g.drawVerticalLine ((int) x, area.getBottom() - 6.0f, area.getBottom());
+            g.setColour (theme::textFaint);
+            g.drawText (juce::String (t, stepS < 0.1 ? 2 : (stepS < 1.0 ? 1 : 0)) + " s",
+                        juce::Rectangle<float> (x + 2.0f, area.getBottom() - 14.0f, 48.0f, 12.0f), juce::Justification::left);
+        }
+    }
+
     // Handles.
     for (const float x : { sx, ex })
     {
@@ -223,6 +277,41 @@ void WaveformView::mouseDoubleClick (const juce::MouseEvent&)
 {
     viewStart = 0;
     viewEnd = total;
+    rebuildPeaks();
+    repaint();
+}
+
+void WaveformView::zoomBy (double factor)
+{
+    if (audio == nullptr || total <= 0)
+        return;
+    const auto len = viewEnd - viewStart;
+    const auto anchor = (selStart + selEnd) / 2;
+    const auto minLen = juce::jmin<juce::int64> (total, (juce::int64) (0.02 * audio->sampleRate));
+    const auto newLen = juce::jlimit<juce::int64> (minLen, total, (juce::int64) ((double) len * factor));
+    const double t = (double) (anchor - viewStart) / juce::jmax<juce::int64> (1, len);
+    auto start = anchor - (juce::int64) (t * (double) newLen);
+    viewStart = juce::jlimit<juce::int64> (0, total - newLen, start);
+    viewEnd = viewStart + newLen;
+    rebuildPeaks();
+    repaint();
+}
+
+void WaveformView::fitView()
+{
+    viewStart = 0;
+    viewEnd = total;
+    rebuildPeaks();
+    repaint();
+}
+
+void WaveformView::zoomToSelection()
+{
+    if (audio == nullptr || selEnd <= selStart)
+        return;
+    const auto pad = (selEnd - selStart) / 10;
+    viewStart = juce::jmax<juce::int64> (0, selStart - pad);
+    viewEnd = juce::jmin (total, selEnd + pad);
     rebuildPeaks();
     repaint();
 }

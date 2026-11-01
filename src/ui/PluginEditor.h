@@ -54,6 +54,9 @@ private:
 
     juce::TextButton loadButton { "Cargar WAV" }, fragmentButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Fragmento") },
         hostButton { juce::String::fromUTF8 ("Entrada del host \xe2\x96\xbe") };
+    juce::TextButton expandButton { "Ampliar" }, zoomInButton { "+" }, zoomOutButton { juce::String::fromUTF8 ("\xe2\x88\x92") },
+        zoomSelButton { "Sel." }, zoomFitButton { "Todo" };
+    bool expanded = false;
     juce::String captureNote;   // last capture result, shown briefly
     int captureNoteTicks = 0;
     void showHostMenu();

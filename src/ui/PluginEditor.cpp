@@ -43,6 +43,17 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     };
     addAndMakeVisible (hostButton);
     addAndMakeVisible (fragmentButton);
+    expandButton.setClickingTogglesState (true);
+    expandButton.setTooltip (u8 ("Editor de audio m\xc3\xa1s alto para seleccionar con precisi\xc3\xb3n"));
+    expandButton.onClick = [this] { expanded = expandButton.getToggleState(); resized(); };
+    zoomInButton.onClick = [this] { waveform.zoomBy (0.6); };
+    zoomOutButton.onClick = [this] { waveform.zoomBy (1.0 / 0.6); };
+    zoomSelButton.setTooltip (u8 ("Zoom al fragmento seleccionado"));
+    zoomSelButton.onClick = [this] { waveform.zoomToSelection(); };
+    zoomFitButton.setTooltip ("Ver todo el archivo");
+    zoomFitButton.onClick = [this] { waveform.fitView(); };
+    for (auto* b : { &expandButton, &zoomInButton, &zoomOutButton, &zoomSelButton, &zoomFitButton })
+        addAndMakeVisible (*b);
 
     addButton.onClick = [this]
     {
@@ -151,7 +162,9 @@ void SpatialEchoEditor::refreshAudioInfo()
     }
     else
     {
-        hostButton.setButtonText (u8 ("Entrada del host \xe2\x96\xbe"));
+        const float inDb = processor.hostInputPeakDb();
+        hostButton.setButtonText (u8 ("Entrada del host  ") + (inDb <= -99.0f ? juce::String ("--") : juce::String (inDb, 0) + " dB")
+                                  + u8 ("  \xe2\x96\xbe"));
         hostButton.removeColour (juce::TextButton::buttonColourId);
     }
 
@@ -159,16 +172,14 @@ void SpatialEchoEditor::refreshAudioInfo()
     juce::String info;
     if (st.loaded)
         info << st.fileName << "   " << juce::String (st.seconds, 2) << " s" << dot << juce::String (st.sampleRate / 1000.0, 1)
-             << " kHz" << dot << (st.numChannels == 1 ? juce::String ("mono") : u8 ("est\xc3\xa9reo"))
-             << dot << (st.embedded ? u8 ("en el proyecto") : u8 ("referencia"));
+             << "k " << (st.numChannels == 1 ? juce::String ("mono") : u8 ("est\xc3\xa9reo"))
+             << (st.embedded ? juce::String() : dot + u8 ("referencia al archivo"));
     else
         info = "Sin audio cargado";
     if (st.message.isNotEmpty())
         info << "   (" << st.message << ")";
     if (const int pend = processor.numPendingPitchRenders(); pend > 0)
         info << u8 ("   \xc2\xb7  procesando tono (") << pend << ")";
-    const float inDb = processor.hostInputPeakDb();
-    info << u8 ("   \xc2\xb7  entrada ") << (inDb <= -99.0f ? juce::String ("silencio") : juce::String (inDb, 0) + " dB");
     if (captureNoteTicks > 0 && --captureNoteTicks >= 0 && captureNote.isNotEmpty())
         info << "   (" << captureNote << ")";
     audioInfo.setText (info, juce::dontSendNotification);
@@ -256,7 +267,7 @@ void SpatialEchoEditor::resized()
     }
 
     r.reduce (12, 10);
-    audioPanel = r.removeFromTop (156);
+    audioPanel = r.removeFromTop (expanded ? juce::jmin (360, r.getHeight() / 2) : 156);
     {
         auto a = audioPanel.reduced (14, 10);
         a.removeFromTop (20);
@@ -266,8 +277,15 @@ void SpatialEchoEditor::resized()
         hostButton.setBounds (top.removeFromLeft (190));
         top.removeFromLeft (12);
         fragmentButton.setBounds (top.removeFromRight (120));
+        top.removeFromRight (8);
+        expandButton.setBounds (top.removeFromRight (76));
+        top.removeFromRight (6);
+        zoomFitButton.setBounds (top.removeFromRight (46));
+        zoomSelButton.setBounds (top.removeFromRight (42));
+        zoomOutButton.setBounds (top.removeFromRight (30));
+        zoomInButton.setBounds (top.removeFromRight (30));
         top.removeFromRight (12);
-        fragmentInfo.setBounds (top.removeFromRight (250));
+        fragmentInfo.setBounds (top.removeFromRight (236));
         audioInfo.setBounds (top);
         a.removeFromTop (8);
         waveform.setBounds (a);

@@ -34,10 +34,15 @@ public:
     juce::Range<juce::int64> selectionSamples() const;
     float xForSample (juce::int64 s) const { return xFor (s); }
 
+    void zoomBy (double factor);  // < 1 zooms in, around the selection centre
+    void fitView();               // whole file
+    void zoomToSelection();
+
 private:
     enum class Drag { None, Start, End, New };
 
     void sceneChanged() override;
+    void selectionChanged() override { repaint(); }
     void syncFromScene();
     void rebuildPeaks();
     float xFor (juce::int64 sample) const;
