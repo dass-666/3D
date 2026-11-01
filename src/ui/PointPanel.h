@@ -21,6 +21,7 @@ public:
     void refreshPending();  // editor timer: pitch render status
 
     static std::optional<StutterSettings> stutterClipboard;  // "copy settings between points"
+    std::function<void()> onOpenCurveEditor;                 // "Editor de curva" button (Pro)
 
 private:
     void sceneChanged() override { refresh(); }
@@ -62,6 +63,7 @@ private:
 
     // Volume Shaper
     juce::Label shaperTitle, shaperNote;
+    juce::TextButton curveEditorButton { juce::String::fromUTF8 ("Editor de curva\xe2\x80\xa6") };
     juce::ToggleButton shaperToggle { "Activar" }, shaperWholeToggle { juce::String::fromUTF8 ("Toda la repetici\xc3\xb3n") },
                        autoLevelToggle { juce::String::fromUTF8 ("Nivel autom\xc3\xa1tico (hasta +6 dB)") };
     juce::ComboBox shaperPresetBox, shapeBox, rateBox, shaperDivisionBox, distBox;

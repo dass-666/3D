@@ -84,6 +84,7 @@ namespace limits
     inline constexpr double minShaperPeriodMs = 5.0, maxShaperPeriodMs = 4000.0;
     inline constexpr double minShaperRampMs = 0.1, maxShaperAttackMs = 50.0, maxShaperReleaseMs = 200.0;
     inline constexpr double maxShaperMakeupDb = 12.0, maxShaperAutoLevelDb = 6.0;
+    inline constexpr int minShaperCurvePoints = 2, maxShaperCurvePoints = 512;
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
     inline constexpr double minCharacter = 0.0, maxCharacter = 100.0;
     inline constexpr double minSpeed = 50.0, maxSpeed = 200.0;
@@ -139,6 +140,14 @@ StutterSettings clamped (StutterSettings);
 // the shaped span (tempo-independent); Milliseconds and Division modes use a
 // fixed period. Every edge is a linear attack/release ramp in ms, so the open
 // part keeps full level (no smoothing filter).
+// One breakpoint of a manual curve: `t` is the position inside the shaped
+// span (0..1), `gain` the level there (0..1). Linear between points.
+struct CurvePoint
+{
+    double t = 0.0, gain = 1.0;
+    bool operator== (const CurvePoint&) const = default;
+};
+
 struct ShaperSettings
 {
     enum class Shape { Square, Triangle, Saw };
@@ -163,6 +172,11 @@ struct ShaperSettings
     double lengthMs = 0.0;              // 0 = to the end of the region; else the shaped span lasts this long
     double makeupDb = 0.0;              // -12..+12 after the curve (limiter still protects the output)
     bool autoLevel = false;             // compensates the RMS lost to the closed parts (at most +6 dB)
+    // Manual curve: when `custom` is true the breakpoints below replace the
+    // generated shape (depth, ramps, pattern... are ignored; makeup/autoLevel,
+    // region and lengthMs still apply). Sorted by t, 2..512 points.
+    bool custom = false;
+    std::vector<CurvePoint> curve;
     bool operator== (const ShaperSettings&) const = default;
 };
 
@@ -173,6 +187,12 @@ std::optional<ShaperSettings::RateMode> shaperRateModeFromString (const juce::St
 juce::String toString (ShaperSettings::Distribution);
 std::optional<ShaperSettings::Distribution> shaperDistributionFromString (const juce::String&);
 ShaperSettings clamped (ShaperSettings);
+// Manual curve helpers. normalisedCurve sorts by t, clamps and drops excess
+// points (bakeCurve, which turns the generated shape into points, lives in
+// audio/EchoEngine.h next to shaperGain).
+std::vector<CurvePoint> normalisedCurve (std::vector<CurvePoint>);
+// Curve value at t (0..1), linear between breakpoints; 1 if fewer than 2 points.
+double curveGainAt (const std::vector<CurvePoint>&, double t) noexcept;
 // Shortest cut (seconds) the curve can represent usefully: attack + release + 1 ms.
 double minimumCutSeconds (const ShaperSettings&);
 // Largest cut count that keeps every cut at least minimumCutSeconds over a span of `spanSeconds`.

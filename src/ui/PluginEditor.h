@@ -3,6 +3,7 @@
 // Main window: header, audio editor (waveform + fragment), spatial map (where),
 // point panel, timeline (when). Easy and Pro share the same state and engine.
 
+#include "ui/CurveEditor.h"
 #include "ui/EditorContext.h"
 #include "ui/HeaderBar.h"
 #include "ui/PointPanel.h"
@@ -29,6 +30,9 @@ public:
     SpatialMap& getMap() noexcept { return map; }
     TimelineView& getTimeline() noexcept { return timeline; }
     WaveformView& getWaveform() noexcept { return waveform; }
+    CurveEditor& getCurveEditor() noexcept { return curveEditor; }
+    void showCurveEditor (bool);
+    bool isCurveEditorOpen() const noexcept { return curveOpen; }
 
 private:
     void timerCallback() override;
@@ -51,6 +55,8 @@ private:
     SpatialMap map;
     PointPanel pointPanel;
     TimelineView timeline;
+    CurveEditor curveEditor;
+    bool curveOpen = false;
 
     juce::TextButton loadButton { "Cargar WAV" }, fragmentButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Fragmento") },
         hostButton { juce::String::fromUTF8 ("Entrada del host \xe2\x96\xbe") };

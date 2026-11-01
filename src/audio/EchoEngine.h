@@ -69,6 +69,10 @@ struct PlannedEcho
 float shaperGain (const ShaperSettings&, double t, double length, double divisionSeconds) noexcept;
 // Shaped span of a voice of `length` seconds (false = nothing is shaped).
 bool shaperSpan (const ShaperSettings&, double length, double& start, double& end) noexcept;
+// Samples the generated shape of `s` over a span of `spanSeconds` into at
+// most `maxPoints` breakpoints (simplified: the same curve, not a dense trace).
+std::vector<CurvePoint> bakeCurve (const ShaperSettings& s, double spanSeconds, double divisionSeconds,
+                                   int maxPoints = limits::maxShaperCurvePoints);
 // Makeup gain (linear) applied together with the curve: makeupDb plus, with
 // autoLevel, the RMS the closed parts remove (capped at +6 dB; +12 dB in total).
 float shaperLevelGain (const ShaperSettings&, double voiceSeconds, double divisionSeconds);

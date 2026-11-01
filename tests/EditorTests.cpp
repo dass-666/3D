@@ -4,8 +4,10 @@
 #include "plugin/PluginProcessor.h"
 #include "ui/PluginEditor.h"
 #include "ui/SpatialMap.h"
+#include "audio/EchoEngine.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
 
@@ -188,4 +190,124 @@ TEST_CASE ("Editor interactions: drag on the map pans, drag on the timeline move
     const auto& src = p.getSceneForUi().source;
     CHECK (std::abs (src.trimStart - 12000) < 200);
     CHECK (std::abs (src.trimEnd - 36000) < 200);
+}
+
+TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, removed, undone, A/B and copied")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.setUiMode (UiMode::Pro);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1240, 840);
+    auto& ctx = ed.getContext();
+    const auto id = ctx.scene().points[0].id;
+    ctx.edit ([&] (Scene& s) { auto sh = shaperPresets()[0].settings; setShaper (s, id, sh); });  // Gate, 8 cuts
+    ctx.select (id, false);
+
+    auto& ce = ed.getCurveEditor();
+    CHECK (! ce.isVisible());
+    ed.showCurveEditor (true);
+    CHECK (ce.isVisible());
+    CHECK (ce.getBounds().getWidth() > 1000);
+    CHECK (ce.voiceSeconds() > 0.5);
+    snapshot (ed, "ui-curve-generated.png");
+
+    // Generated shape -> manual points (baked from the same curve).
+    const auto* sh = ce.current();
+    REQUIRE (sh != nullptr);
+    CHECK (! sh->custom);
+    ce.setManual (true);
+    sh = ce.current();
+    CHECK (sh->custom);
+    const int baked = (int) sh->curve.size();
+    CHECK (baked >= 8 * 4);
+    CHECK (findPoint (p.getSceneForUi(), id)->shaper.custom);  // reached the processor's model
+
+    // Double-click adds a point where the mouse is; the engine's gain there follows.
+    const auto c = ce.canvasArea();
+    const juce::Point<float> at (c.getX() + c.getWidth() * 0.37f, ce.yForGain (0.8));
+    const auto fractionBefore = ce.fractionAt (at.x);
+    juce::MouseEvent down (juce::Desktop::getInstance().getMainMouseSource(), at, {}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, &ce, &ce,
+                           juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 2, false);
+    ce.mouseDoubleClick (down);
+    sh = ce.current();
+    CHECK ((int) sh->curve.size() == baked + 1);
+    {
+        const double len = ce.voiceSeconds();
+        const double t = fractionBefore * len;
+        CHECK_THAT (shaperGain (*sh, t, len, 0.125), Catch::Matchers::WithinAbs (0.8, 0.05));
+    }
+
+    // Dragging the new point down to 0 at the same time.
+    int idx = -1;
+    for (int i = 0; i < (int) sh->curve.size(); ++i)
+        if (std::abs (sh->curve[(size_t) i].gain - 0.8) < 1e-6)
+            idx = i;
+    REQUIRE (idx >= 0);
+    ce.movePoint (idx, sh->curve[(size_t) idx].t, 0.0, true);
+    sh = ce.current();
+    CHECK (sh->curve[(size_t) idx].gain == 0.0);
+    snapshot (ed, "ui-curve-manual.png");
+
+    // Undo twice: back to the baked curve, then to the generated shape. Redo returns.
+    CHECK (ce.canUndo());
+    ce.undo();
+    CHECK (std::abs (ce.current()->curve[(size_t) idx].gain - 0.8) < 1e-6);
+    ce.undo();
+    ce.undo();
+    CHECK (! ce.current()->custom);
+    ce.redo();
+    CHECK (ce.current()->custom);
+    CHECK (findPoint (p.getSceneForUi(), id)->shaper.custom);
+
+    // A/B: store B, change, toggle back and forth.
+    ce.storeB();
+    const auto stateA = *ce.current();
+    ce.mirrorCurve();
+    CHECK (! (*ce.current() == stateA));
+    ce.toggleAB();
+    CHECK (*ce.current() == stateA);
+    ce.toggleAB();
+    CHECK (! (*ce.current() == stateA));
+
+    // Copy to another point.
+    ce.copyCurve();
+    REQUIRE (CurveEditor::curveClipboard.has_value());
+    const auto id2 = ctx.scene().points[1].id;
+    ctx.select (id2, false);
+    CHECK (! ce.current()->custom);
+    ce.pasteCurve();
+    CHECK (ce.current()->custom);
+    CHECK (ce.current()->curve == *CurveEditor::curveClipboard);
+
+    // Selection -> region; duplicate; remove keeps at least 2 points.
+    ce.setSelection (std::pair { 0.25, 0.75 });
+    ce.selectionToRegion();
+    CHECK (! ce.current()->wholeVoice);
+    CHECK_THAT (ce.current()->regionStart, Catch::Matchers::WithinAbs (0.25, 1e-9));
+    const int n = (int) ce.current()->curve.size();
+    ce.duplicateCurve();
+    CHECK ((int) ce.current()->curve.size() == 2 * n);
+    while (ce.numPoints() > 2)
+        ce.removePoint (0);
+    ce.removePoint (0);
+    CHECK (ce.numPoints() == 2);
+
+    // Zoom keeps the view inside the voice; closing restores the layout.
+    ce.zoomBy (0.25, 0.5);
+    CHECK (ce.fractionAt (ce.canvasArea().getX()) >= 0.0);
+    CHECK (ce.fractionAt (ce.canvasArea().getRight()) <= 1.0);
+    ce.fitView();
+    ed.showCurveEditor (false);
+    CHECK (! ce.isVisible());
+
+    // Everything the editor did survives a state round trip.
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    SpatialEchoProcessor q;
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (q.getSceneForUi() == p.getSceneForUi());
 }

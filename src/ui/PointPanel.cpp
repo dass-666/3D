@@ -326,7 +326,11 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     content.addAndMakeVisible (shaperWholeToggle);
     shaperRegionStart.onValueChange = [this] { editPrimary ([v = shaperRegionStart.getValue() / 100.0] (Scene& s, Point& p) { auto x = p.shaper; x.regionStart = v; x.regionEnd = juce::jmax (v, x.regionEnd); setShaper (s, p.id, x); }); };
     shaperRegionEnd.onValueChange = [this] { editPrimary ([v = shaperRegionEnd.getValue() / 100.0] (Scene& s, Point& p) { auto x = p.shaper; x.regionEnd = v; x.regionStart = juce::jmin (v, x.regionStart); setShaper (s, p.id, x); }); };
-    shaperNote.setText (u8 ("Edici\xc3\xb3n manual de puntos de la curva: pr\xc3\xb3ximamente. La curva se ve en la l\xc3\xadnea temporal."), juce::dontSendNotification);
+    shaperNote.setText (u8 ("La curva se ve en la l\xc3\xadnea temporal y en la onda. El editor permite zoom, regla en ms y puntos manuales."), juce::dontSendNotification);
+    curveEditorButton.setColour (juce::TextButton::buttonColourId, theme::violet);
+    curveEditorButton.setTooltip (u8 ("Abre el editor visual de la curva (zoom, regla en ms, puntos manuales, deshacer, A/B)"));
+    curveEditorButton.onClick = [this] { if (onOpenCurveEditor) onOpenCurveEditor(); };
+    content.addAndMakeVisible (curveEditorButton);
     shaperNote.setFont (theme::font (11.0f));
     shaperNote.setColour (juce::Label::textColourId, theme::textFaint);
     content.addAndMakeVisible (shaperNote);
@@ -706,6 +710,7 @@ int PointPanel::layoutContent (int width)
     const bool zone = pro && ! shaperWholeToggle.getToggleState();
     labelled (shaperRegionStartL, shaperRegionStart, zone);
     labelled (shaperRegionEndL, shaperRegionEnd, zone);
+    curveEditorButton.setBounds (row (26));
     shaperNote.setBounds (row (30));
 
     r.removeFromTop (6);

@@ -420,6 +420,79 @@ TEST_CASE ("Volume Shaper: Milliseconds and Division rates")
     }
 }
 
+TEST_CASE ("Volume Shaper: manual curve (breakpoints) replaces the generated shape and persists")
+{
+    // Interpolation and normalisation.
+    std::vector<CurvePoint> c { { 1.0, 0.0 }, { 0.0, 1.0 }, { 0.5, 0.5 }, { 2.0, 7.0 } };
+    c = normalisedCurve (c);
+    REQUIRE (c.size() == 4);
+    CHECK (c[0].t == 0.0);
+    CHECK (c[3].t == 1.0);
+    CHECK (c[3].gain == 1.0);
+    CHECK_THAT (curveGainAt (c, 0.25), Catch::Matchers::WithinAbs (0.75, 1e-9));
+    CHECK_THAT (curveGainAt (c, 0.75), Catch::Matchers::WithinAbs (0.25, 1e-9));
+    CHECK (curveGainAt ({}, 0.3) == 1.0);
+
+    // Baking the generated shape gives the same curve, with few points.
+    ShaperSettings gen;
+    gen.enabled = true; gen.cuts = 8; gen.attackMs = 1.0; gen.releaseMs = 3.0;
+    const auto baked = bakeCurve (gen, 1.0, 0.125);
+    CHECK (baked.size() >= 8 * 4);
+    CHECK (baked.size() <= 8 * 7);
+    ShaperSettings man = gen;
+    man.custom = true;
+    man.curve = baked;
+    for (int i = 0; i < 2000; ++i)
+    {
+        const double t = i / 2000.0;
+        REQUIRE_THAT (shaperGain (man, t, 1.0, 0.0), Catch::Matchers::WithinAbs (shaperGain (gen, t, 1.0, 0.0), 0.02));
+    }
+    // Too many cuts for the breakpoint budget: still at most maxShaperCurvePoints, still a curve.
+    gen.cuts = 256;
+    CHECK ((int) bakeCurve (gen, 1.0, 0.125).size() <= limits::maxShaperCurvePoints);
+    CHECK (bakeCurve (gen, 1.0, 0.125).size() >= 2);
+
+    // The engine follows the manual curve exactly (free hand: a long fade).
+    const double sr = 48000.0;
+    Scene s;
+    Point p;
+    p.id = "p"; p.number = 1;
+    p.shaper.enabled = true;
+    p.shaper.custom = true;
+    p.shaper.curve = { { 0.0, 1.0 }, { 0.5, 1.0 }, { 0.5, 0.0 }, { 1.0, 0.0 } };  // half open, then silence
+    s.points.push_back (p);
+    auto sample = std::make_shared<const SampleBuffer> (tone (sr, 1.0));
+    auto plan = buildPlan (s, sample, sr);
+    EchoEngine e;
+    e.prepare (sr);
+    const auto out = run (e, *plan, sr, 256, 1.1, [] (int) { return 120.0; });
+    auto peakAround = [&] (double sec)
+    {
+        float m = 0.0f;
+        for (int i = (int) (sec * sr) - 100; i < (int) (sec * sr) + 100; ++i)
+            m = std::max (m, std::abs (out[(size_t) i]));
+        return m;
+    };
+    CHECK (peakAround (0.25) > 0.4f);
+    CHECK (peakAround (0.75) < 1e-4f);
+
+    // Fewer than 2 points: not custom after clamping. Persistence keeps the points.
+    ShaperSettings one;
+    one.custom = true;
+    one.curve = { { 0.0, 1.0 } };
+    CHECK (! clamped (one).custom);
+    Document d;
+    s.id = makeId();
+    d.scenes.push_back (s);
+    d.activeSceneId = s.id;
+    const auto back = documentFromJson (toJson (d));
+    REQUIRE (back.value.has_value());
+    INFO (back.warnings.joinIntoString ("\n"));
+    CHECK (back.warnings.isEmpty());
+    CHECK (back.value->scenes[0].points[0].shaper.custom);
+    CHECK (back.value->scenes[0].points[0].shaper.curve == s.points[0].shaper.curve);
+}
+
 TEST_CASE ("Volume Shaper presets exist and are valid")
 {
     const auto& presets = shaperPresets();

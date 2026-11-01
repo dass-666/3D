@@ -111,6 +111,17 @@ var pointToVar (const Point& p)
     set (sh, "lengthMs", p.shaper.lengthMs);
     set (sh, "makeupDb", p.shaper.makeupDb);
     set (sh, "autoLevel", p.shaper.autoLevel);
+    set (sh, "custom", p.shaper.custom);
+    if (! p.shaper.curve.empty())
+    {
+        juce::Array<var> curve;
+        for (auto& pt : p.shaper.curve)
+        {
+            juce::Array<var> xy { pt.t, pt.gain };
+            curve.add (var (xy));
+        }
+        set (sh, "curve", var (curve));
+    }
     set (o, "shaper", sh);
 
     auto fx = obj();
@@ -337,6 +348,25 @@ struct Reader
             x.lengthMs = number (sh, "lengthMs", 0.0, 0.0, 60000.0, where + ".shaper");
             x.makeupDb = number (sh, "makeupDb", 0.0, -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb, where + ".shaper");
             x.autoLevel = flag (sh, "autoLevel", false);
+            x.custom = flag (sh, "custom", false);
+            if (const auto* curve = sh.getProperty ("curve", var()).getArray())
+            {
+                for (const auto& pt : *curve)
+                {
+                    const auto* xy = pt.getArray();
+                    if (xy == nullptr || xy->size() != 2 || ! (*xy)[0].isDouble() && ! (*xy)[0].isInt() || ! (*xy)[1].isDouble() && ! (*xy)[1].isInt())
+                    {
+                        warnings.add (where + ".shaper.curve: bad point ignored");
+                        continue;
+                    }
+                    x.curve.push_back ({ (double) (*xy)[0], (double) (*xy)[1] });
+                }
+            }
+            else if (x.custom)
+            {
+                warnings.add (where + ".shaper.curve: missing, using the generated shape");
+                x.custom = false;
+            }
             p.shaper = clamped (x);
         }
 

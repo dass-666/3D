@@ -9,7 +9,7 @@ const juce::String dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
 }
 
 SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
-    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx)
+    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx)
 {
     ctx.addListener (this);
 
@@ -18,6 +18,9 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
         addAndMakeVisible (c);
 
     header.onModeChange = [this] (bool pro) { setProMode (pro); };
+    addChildComponent (curveEditor);
+    curveEditor.onClose = [this] { showCurveEditor (false); };
+    pointPanel.onOpenCurveEditor = [this] { showCurveEditor (true); };
 
     loadButton.setColour (juce::TextButton::buttonColourId, theme::blue.withAlpha (0.85f));
     loadButton.onClick = [this] { chooseWav(); };
@@ -99,6 +102,15 @@ SpatialEchoEditor::~SpatialEchoEditor()
     stopTimer();
     ctx.removeListener (this);
     setLookAndFeel (nullptr);
+}
+
+void SpatialEchoEditor::showCurveEditor (bool open)
+{
+    curveOpen = open;
+    curveEditor.setVisible (open);
+    if (open)
+        curveEditor.toFront (true);
+    resized();
 }
 
 void SpatialEchoEditor::setProMode (bool pro)
@@ -267,6 +279,8 @@ void SpatialEchoEditor::resized()
     }
 
     r.reduce (12, 10);
+    if (curveOpen)
+        curveEditor.setBounds (r);  // covers the audio editor, map, panel and timeline until closed
     audioPanel = r.removeFromTop (expanded ? juce::jmin (360, r.getHeight() / 2) : 156);
     {
         auto a = audioPanel.reduced (14, 10);

@@ -159,8 +159,41 @@ ShaperSettings clamped (ShaperSettings s)
         if ((c == 'x' || c == 'X' || c == '.') && pat.length() < 64)
             pat << (c == '.' ? '.' : 'x');
     s.pattern = pat.containsChar ('.') ? pat : juce::String();  // all open = no pattern
+    s.curve = normalisedCurve (std::move (s.curve));
+    if ((int) s.curve.size() < limits::minShaperCurvePoints)
+        s.custom = false;
     return s;
 }
+
+std::vector<CurvePoint> normalisedCurve (std::vector<CurvePoint> c)
+{
+    for (auto& pt : c)
+    {
+        pt.t = std::isfinite (pt.t) ? std::clamp (pt.t, 0.0, 1.0) : 0.0;
+        pt.gain = std::isfinite (pt.gain) ? std::clamp (pt.gain, 0.0, 1.0) : 1.0;
+    }
+    std::stable_sort (c.begin(), c.end(), [] (const CurvePoint& a, const CurvePoint& b) { return a.t < b.t; });
+    if ((int) c.size() > limits::maxShaperCurvePoints)
+        c.resize ((size_t) limits::maxShaperCurvePoints);
+    return c;
+}
+
+double curveGainAt (const std::vector<CurvePoint>& c, double t) noexcept
+{
+    if (c.size() < 2)
+        return 1.0;
+    if (t <= c.front().t)
+        return c.front().gain;
+    if (t >= c.back().t)
+        return c.back().gain;
+    // First point with pt.t > t (sorted), then interpolate from its predecessor.
+    const auto it = std::upper_bound (c.begin(), c.end(), t, [] (double v, const CurvePoint& pt) { return v < pt.t; });
+    const auto& b = *it;
+    const auto& a = *(it - 1);
+    const double w = b.t > a.t ? (t - a.t) / (b.t - a.t) : 1.0;
+    return a.gain + (b.gain - a.gain) * w;
+}
+
 
 double minimumCutSeconds (const ShaperSettings& s)
 {

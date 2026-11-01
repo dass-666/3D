@@ -118,6 +118,17 @@ float shaperGain (const ShaperSettings& sh, double t, double length, double divi
 
     const double span = end - start;
     const double local = t - start;  // seconds into the shaped span
+    if (sh.custom && sh.curve.size() >= 2)
+    {
+        double g = curveGainAt (sh.curve, local / span);
+        if (! sh.wholeVoice || sh.lengthMs > 0.0)
+        {
+            const double edge = 0.002;  // 2 ms back to unity at the edges of a partial span
+            if (local < edge)     g = std::max (g, 1.0 - local / edge);
+            if (end - t < edge)   g = std::max (g, 1.0 - (end - t) / edge);
+        }
+        return (float) g;
+    }
     int cut = 0;
     double cutStart = 0.0, cutEnd = span;
     switch (sh.rateMode)
@@ -203,6 +214,71 @@ float shaperGain (const ShaperSettings& sh, double t, double length, double divi
         if (end - t < release)    g = std::max (g, 1.0 - (end - t) / release);
     }
     return (float) g;
+}
+
+std::vector<CurvePoint> bakeCurve (const ShaperSettings& settings, double spanSeconds, double divisionSeconds, int maxPoints)
+{
+    // Sample the generated curve densely over the shaped span (region/length
+    // already apply to the span, so the samples cover exactly 0..1 of it),
+    // then keep only the breakpoints that matter (Douglas-Peucker).
+    ShaperSettings s = settings;
+    s.enabled = true;
+    s.custom = false;
+    s.wholeVoice = true;
+    s.lengthMs = 0.0;
+    const int n = 8192;
+    std::vector<CurvePoint> dense ((size_t) n + 1);
+    for (int i = 0; i <= n; ++i)
+    {
+        const double t = (double) i / n;
+        dense[(size_t) i] = { t, (double) shaperGain (s, std::min (t, 0.999999) * std::max (1.0e-3, spanSeconds),
+                                                      std::max (1.0e-3, spanSeconds), divisionSeconds) };
+    }
+    std::vector<char> keep ((size_t) n + 1, 0);
+    keep.front() = keep.back() = 1;
+    std::vector<std::pair<int, int>> stack { { 0, n } };
+    const double eps = 0.004;
+    while (! stack.empty())
+    {
+        const auto [a, b] = stack.back();
+        stack.pop_back();
+        if (b - a < 2)
+            continue;
+        double worst = 0.0;
+        int at = -1;
+        for (int i = a + 1; i < b; ++i)
+        {
+            const double w = (double) (i - a) / (b - a);
+            const double lin = dense[(size_t) a].gain + (dense[(size_t) b].gain - dense[(size_t) a].gain) * w;
+            const double d = std::abs (dense[(size_t) i].gain - lin);
+            if (d > worst) { worst = d; at = i; }
+        }
+        if (at >= 0 && worst > eps)
+        {
+            keep[(size_t) at] = 1;
+            stack.push_back ({ a, at });
+            stack.push_back ({ at, b });
+        }
+    }
+    std::vector<CurvePoint> out;
+    for (int i = 0; i <= n; ++i)
+        if (keep[(size_t) i])
+            out.push_back (dense[(size_t) i]);
+    // Too many breakpoints: thin out by keeping the largest deviations only
+    // (coarser steps). Rare: 256 square cuts need ~1024 points, so the first
+    // pass keeps every ramp and the second merges the shortest segments.
+    while ((int) out.size() > std::max (2, maxPoints))
+    {
+        size_t victim = 1;
+        double best = 1.0e9;
+        for (size_t i = 1; i + 1 < out.size(); ++i)
+        {
+            const double d = out[i + 1].t - out[i - 1].t;
+            if (d < best) { best = d; victim = i; }
+        }
+        out.erase (out.begin() + (long) victim);
+    }
+    return out;
 }
 
 float shaperLevelGain (const ShaperSettings& sh, double voiceSeconds, double divisionSeconds)
