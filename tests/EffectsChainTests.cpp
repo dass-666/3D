@@ -473,7 +473,11 @@ TEST_CASE ("Effect chain: mono output, every block size and sample rate, and a C
     const auto stereo = run (e, plan.get(), sr, block, 3.0);
     const double wall = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
     INFO ("sr " << sr << " block " << block << " 3 s of 16 full chains took " << wall << " s (debug build)");
-    CHECK (wall < 3.0);  // slower than real time would be unusable even in a debug build
+#if NDEBUG
+    CHECK (wall < 1.0);  // Release: well under real time
+#else
+    CHECK (wall < 6.0);  // Debug (no optimisation, shared CI machines): only catches a runaway
+#endif
     REQUIRE (finite (stereo));
     CHECK (peakBetween (stereo.l, sr, 0.0, 3.0) > 0.1f);
     CHECK (peakBetween (stereo.l, sr, 0.0, 3.0) < 4.0f);  // 16 chains summed, before the output limiter

@@ -244,6 +244,20 @@ Barra de acciones (debajo de la cabecera, igual en Fácil y Pro): **Importar aud
 
 Límites conocidos de B9: en vivo no hay pitch, formantes ni Stutter (necesitan el fragmento pre-renderizado: usa Capturar + repeticiones); el ciclo de cortes en vivo usa el tempo del proyecto y la exportación se renderiza al BPM que tenía el proyecto al exportar (un cambio de tempo durante las repeticiones no se refleja); bloques del host mayores de 4096 muestras (o del doble del anunciado) pasan sin procesar en vivo.
 
+## 16. B10: edición libre de cortes con el ratón (editor de curva)
+
+Selecciona una repetición, pestaña **Cortes** (Pro) o «Editor de curva…», y pulsa **Ampliar** para trabajar a pantalla completa.
+
+1. **Editar puntos** (envolvente continua): arrastra un punto en diagonal: cambia a la vez el momento (X) y el volumen (Y); la etiqueta muestra ms y %. Un punto se detiene en su vecino (no lo cruza). Mayús mientras arrastras = ajuste fino (1/10). ← → mueven el punto seleccionado 1 ms (Mayús: 0,1 ms).
+2. **Editar cortes** (bloques): la primera vez se crean a partir de la forma que suena ahora. Arrastra el **cuerpo** de un corte para moverlo entero, sus **bordes** para estirarlo o acortarlo (cursor ↔) y su **borde superior** para la intensidad (cursor ↕). Arrastrar en un hueco vacío crea un corte nuevo; doble clic crea uno de un paso de rejilla (50 ms sin rejilla). Clic derecho en un corte: Duplicar, Eliminar, Intensidad. Ctrl+D duplica, Supr borra. Prueba el patrón «TA — TA-TA — TAAA — TA» y escúchalo con **Espacio** o «▶ Escuchar»: debe sonar exactamente lo dibujado.
+3. **Rejilla**: activa «Rejilla» y elige 1/4…1/64 o tresillos. Los bordes caen en la rejilla del BPM, contada desde el inicio de la repetición. Con la rejilla apagada la posición es libre en ms. Cambia el BPM de FL Studio: los cortes no se mueven (se guardan en ms).
+4. **Zoom y desplazamiento**: Ctrl+rueda o + / − hasta ver milisegundos sueltos; rueda o la barra inferior para desplazarte.
+5. **Cambiar de herramienta no pierde nada**: los puntos y los cortes se guardan por separado. Clic derecho en un hueco: «Convertir cortes → puntos» o «Crear cortes desde la curva actual» (estas dos sí reemplazan, y lo dicen). Con más de 127 cortes la conversión a puntos se rechaza con un aviso.
+6. **Deshacer**: cada arrastre es un paso (Ctrl+Z / Ctrl+Y). Guarda el proyecto, ciérralo y ábrelo: los cortes vuelven en las mismas posiciones. Las demás repeticiones no cambian.
+7. **Rendimiento**: con 256 cortes el editor debe seguir fluido y el audio sin cortes (diagnóstico «perdidas» = 0).
+
+Límite: dentro de cada corte el ataque y la liberación se aplican hacia dentro (el corte suena exactamente entre sus bordes). En cortes más cortos que ataque + liberación, las rampas se acortan a la mitad del corte.
+
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la
   repetición ante pequeñas diferencias de posición del host) se reprodujo en

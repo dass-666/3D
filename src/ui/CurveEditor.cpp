@@ -44,8 +44,28 @@ CurveEditor::CurveEditor (EditorContext& c) : ctx (c)
                                    "en la selecci\xc3\xb3n o en toda la zona. Lo que se dibuja es lo que suena."));
     generateButton.onClick = [this] { generatePerfectCuts(); };
     manualButton.setClickingTogglesState (true);
-    manualButton.setTooltip (u8 ("Puntos manuales en lugar de la forma generada (se parte de la forma actual)"));
+    manualButton.setTooltip (u8 ("Envolvente continua con puntos: arr\xc3\xa1stralos en el tiempo (X) y en volumen (Y). Se parte de la forma actual."));
     manualButton.onClick = [this] { setManual (manualButton.getToggleState()); };
+    cutsButton.setClickingTogglesState (true);
+    cutsButton.setTooltip (u8 ("Cortes como bloques: mu\xc3\xa9velos, estira sus bordes, cambia su intensidad (borde superior), "
+                               "a\xc3\xb1" "ade arrastrando en vac\xc3\xado. Se parte de la forma actual."));
+    cutsButton.onClick = [this] { setCutsMode (cutsButton.getToggleState()); };
+    gridButton.setClickingTogglesState (true);
+    gridButton.setTooltip (u8 ("Ajustar a la rejilla del BPM. Apagada: posici\xc3\xb3n libre en ms. May\xc3\xba" "s al arrastrar: ajuste fino sin rejilla."));
+    gridButton.onClick = [this] { setGrid (gridButton.getToggleState(), gridBeats); };
+    for (auto [beats, name] : { std::pair { 1.0, "1/4" }, std::pair { 0.5, "1/8" }, std::pair { 0.25, "1/16" }, std::pair { 0.125, "1/32" },
+                                std::pair { 0.0625, "1/64" }, std::pair { 1.0 / 3.0, "1/8 T" }, std::pair { 1.0 / 6.0, "1/16 T" } })
+        gridBox.addItem (name, juce::roundToInt (beats * 3000.0));
+    gridBox.setSelectedId (750, juce::dontSendNotification);
+    gridBox.setTooltip (u8 ("Divisi\xc3\xb3n de la rejilla (al BPM del proyecto)"));
+    gridBox.onChange = [this] { setGrid (gridOn, gridBox.getSelectedId() / 3000.0); };
+    addAndMakeVisible (cutsButton);
+    addAndMakeVisible (gridButton);
+    addAndMakeVisible (gridBox);
+    hScroll.setAutoHide (false);
+    hScroll.setRangeLimits (0.0, 1.0);
+    hScroll.addListener (this);
+    addAndMakeVisible (hScroll);
     bakeButton.setTooltip (u8 ("Convierte la forma generada (cortes, rampas, patr\xc3\xb3n) en puntos editables"));
     bakeButton.onClick = [this] { bakeFromGenerator(); };
     undoButton.onClick = [this] { undo(); };
@@ -181,6 +201,8 @@ void CurveEditor::selectionChanged()
         showingB = false;
         selection.reset();
         selected = hovered = dragging = -1;
+        selBlock = hoverBlock = dragBlock = -1;
+        note.clear();
         fitView();
         if (p != nullptr)
             record();
@@ -211,8 +233,10 @@ void CurveEditor::refreshButtons()
         onStateChanged();
     const auto* sh = current();
     const bool has = sh != nullptr;
-    const bool manual = has && sh->custom;
+    const bool manual = isPointsMode();
     manualButton.setToggleState (manual, juce::dontSendNotification);
+    cutsButton.setToggleState (isCutsMode(), juce::dontSendNotification);
+    cutsButton.setEnabled (has && voiceSeconds() > 0.0);
     undoButton.setEnabled (canUndo());
     redoButton.setEnabled (canRedo());
     copyButton.setEnabled (has);
@@ -232,7 +256,11 @@ void CurveEditor::refreshButtons()
     if (has)
     {
         const double len = voiceSeconds();
-        if (manual)
+        if (isCutsMode())
+            text << u8 ("Cortes manuales: ") << juce::String (sh->blocks.size()) << u8 (" \xc2\xb7 cerrado ")
+                 << juce::String (100.0 - sh->depthPercent, 0) << " %"
+                 << (selBlock >= 0 ? u8 (" \xc2\xb7 ") + blockLabel (selBlock) : juce::String());
+        else if (manual)
             text << u8 ("Curva manual: ") << juce::String (sh->curve.size()) << u8 (" puntos \xc2\xb7 los controles de cortes no se aplican");
         else
             text << u8 ("Generador: ") << (sh->rateMode == ShaperSettings::RateMode::Count ? juce::String (sh->cuts) + " cortes"
@@ -247,7 +275,15 @@ void CurveEditor::refreshButtons()
             text << u8 (" \xc2\xb7 ") << pointLabel (hovered);
         text << u8 (" \xc2\xb7 nivel ") << juce::String (juce::Decibels::gainToDecibels (shaperLevelGain (*sh, len, 0.125)), 1) << " dB";
     }
+    if (note.isNotEmpty())
+        text = note + u8 ("  \xc2\xb7  ") + text;
     info.setText (text, juce::dontSendNotification);
+    help.setText (isCutsMode()
+                      ? u8 ("Arrastrar en vac\xc3\xado: nuevo corte \xc2\xb7 cuerpo: mover \xc2\xb7 bordes: estirar \xc2\xb7 borde superior: intensidad \xc2\xb7 "
+                            "May\xc3\xba" "s: fino sin rejilla \xc2\xb7 \xe2\x86\x90\xe2\x86\x92: 1 ms \xc2\xb7 Ctrl+D duplicar \xc2\xb7 Supr borrar \xc2\xb7 clic derecho: men\xc3\xba \xc2\xb7 Espacio: escuchar")
+                      : u8 ("Doble clic: a\xc3\xb1" "adir punto \xc2\xb7 arrastrar: mover en X e Y \xc2\xb7 May\xc3\xba" "s: fino \xc2\xb7 clic derecho o Supr: quitar \xc2\xb7 "
+                            "regla: seleccionar \xc2\xb7 rueda: desplazar, Ctrl+rueda: zoom \xc2\xb7 Espacio: escuchar \xc2\xb7 Ctrl+Z / Ctrl+Y"),
+                  juce::dontSendNotification);
 }
 
 juce::String CurveEditor::pointLabel (int index) const
@@ -268,9 +304,18 @@ void CurveEditor::setManual (bool on)
     if (sh == nullptr)
         return;
     auto x = *sh;
+    if (! on && x.manualKind != ShaperSettings::ManualKind::Points)
+        return;  // «Editar puntos» was not the active tool
     if (on && x.curve.size() < 2)
-        x.curve = bakeCurve (x, (spanFractions().second - spanFractions().first) * voiceSeconds(), 0.125);
+    {
+        // Start from what sounds now (generator or cuts).
+        auto active = x;
+        active.custom = x.custom;
+        x.curve = active.custom ? bakeActiveCurve (active, (spanFractions().second - spanFractions().first) * voiceSeconds(), 0.125)
+                                : bakeCurve (x, (spanFractions().second - spanFractions().first) * voiceSeconds(), 0.125);
+    }
     x.custom = on;
+    x.manualKind = ShaperSettings::ManualKind::Points;
     x.enabled = x.enabled || on;
     apply (x, true);
 }
@@ -284,6 +329,7 @@ void CurveEditor::bakeFromGenerator()
     const auto [a, b] = spanFractions();
     x.curve = bakeCurve (x, (b - a) * voiceSeconds(), 0.125);
     x.custom = true;
+    x.manualKind = ShaperSettings::ManualKind::Points;
     x.enabled = true;
     apply (x, true);
 }
@@ -477,18 +523,21 @@ void CurveEditor::selectionToRegion()
 
 void CurveEditor::zoomBy (double factor, double around)
 {
-    const double span = juce::jlimit (0.002, 1.0, (viewEnd - viewStart) * factor);
+    // Down to a 5 ms window (or 1/1000 of the repetition) so single milliseconds can be edited.
+    const double len = voiceSeconds();
+    const double minSpan = juce::jlimit (1.0e-4, 0.05, len > 0.0 ? 0.005 / len : 0.002);
+    const double span = juce::jlimit (minSpan, 1.0, (viewEnd - viewStart) * factor);
     const double centre = viewStart + (viewEnd - viewStart) * around;
     viewStart = juce::jlimit (0.0, 1.0 - span, centre - span * around);
     viewEnd = viewStart + span;
-    repaint();
+    viewChanged();
 }
 
 void CurveEditor::fitView()
 {
     viewStart = 0.0;
     viewEnd = 1.0;
-    repaint();
+    viewChanged();
 }
 
 void CurveEditor::setSelection (std::optional<std::pair<double, double>> s)
@@ -500,13 +549,349 @@ void CurveEditor::setSelection (std::optional<std::pair<double, double>> s)
     repaint();
 }
 
+// ---- tools: points / cuts ----------------------------------------------------
+
+bool CurveEditor::isCutsMode() const
+{
+    const auto* sh = current();
+    return sh != nullptr && sh->custom && sh->manualKind == ShaperSettings::ManualKind::Cuts;
+}
+
+bool CurveEditor::isPointsMode() const
+{
+    const auto* sh = current();
+    return sh != nullptr && sh->custom && sh->manualKind == ShaperSettings::ManualKind::Points;
+}
+
+double CurveEditor::spanMs() const
+{
+    const auto [a, b] = spanFractions();
+    return (b - a) * voiceSeconds() * 1000.0;
+}
+
+void CurveEditor::setCutsMode (bool on)
+{
+    const auto* sh = current();
+    const double len = voiceSeconds();
+    if (sh == nullptr || len <= 0.0)
+        return;
+    auto x = *sh;
+    if (! on)
+    {
+        if (x.manualKind == ShaperSettings::ManualKind::Cuts)
+            x.custom = false;  // back to the generator; the blocks stay stored
+        apply (x, true);
+        return;
+    }
+    if (x.blocks.empty())
+    {
+        // Start from what sounds now (generator or points): nothing is lost, the points stay stored.
+        double closed = 0.0;
+        int found = 0;
+        const auto [a, b] = spanFractions();
+        auto probe = x;
+        probe.custom = x.custom && x.manualKind == ShaperSettings::ManualKind::Points;
+        probe.manualKind = ShaperSettings::ManualKind::Points;
+        x.blocks = detectBlocks (probe, (b - a) * len, 0.125, closed, found);
+        x.depthPercent = juce::jlimit (0.0, 100.0, (1.0 - closed) * 100.0);
+        note = found > (int) x.blocks.size()
+                   ? juce::String (found) + u8 (" aperturas detectadas: se usan las primeras ") + juce::String ((int) x.blocks.size())
+                   : juce::String ((int) x.blocks.size()) + u8 (" cortes creados a partir de la forma actual");
+    }
+    x.custom = true;
+    x.enabled = true;
+    x.manualKind = ShaperSettings::ManualKind::Cuts;
+    apply (x, true);
+}
+
+bool CurveEditor::cutsToPoints()
+{
+    const auto* sh = current();
+    if (sh == nullptr || sh->blocks.empty())
+        return false;
+    // Each opening needs up to 4 breakpoints (closed, ramp up, ramp down, closed).
+    if ((int) sh->blocks.size() * 4 + 2 > limits::maxShaperCurvePoints)
+    {
+        note = u8 ("No caben como puntos: m\xc3\xa1ximo ") + juce::String ((limits::maxShaperCurvePoints - 2) / 4)
+               + u8 (" cortes. Los cortes no se han tocado.");
+        refreshButtons();
+        return false;
+    }
+    auto x = *sh;
+    const auto [a, b] = spanFractions();
+    auto active = x;
+    active.custom = true;
+    active.manualKind = ShaperSettings::ManualKind::Cuts;
+    x.curve = bakeActiveCurve (active, (b - a) * voiceSeconds(), 0.125);
+    x.custom = true;
+    x.manualKind = ShaperSettings::ManualKind::Points;
+    note = juce::String ((int) x.curve.size()) + u8 (" puntos creados desde los cortes (los cortes siguen guardados)");
+    apply (x, true);
+    return true;
+}
+
+void CurveEditor::redetectCuts()
+{
+    const auto* sh = current();
+    if (sh == nullptr)
+        return;
+    auto x = *sh;
+    x.blocks.clear();
+    if (x.manualKind == ShaperSettings::ManualKind::Cuts)
+        x.custom = false;  // detect from the generator, unless points are active
+    apply (x, false);
+    setCutsMode (true);
+}
+
+int CurveEditor::numBlocks() const
+{
+    const auto* sh = current();
+    return sh != nullptr ? (int) sh->blocks.size() : 0;
+}
+
+void CurveEditor::selectBlock (int index)
+{
+    selBlock = index >= 0 && index < numBlocks() ? index : -1;
+    refreshButtons();
+    repaint();
+}
+
+int CurveEditor::addBlock (double startMs, double endMs, double level)
+{
+    const auto* sh = current();
+    if (sh == nullptr || numBlocks() >= limits::maxCutBlocks)
+        return -1;
+    const double total = spanMs();
+    startMs = juce::jlimit (0.0, total, juce::jmin (startMs, endMs));
+    endMs = juce::jlimit (0.0, total, juce::jmax (startMs, endMs));
+    auto x = *sh;
+    // Fit into the gap that contains startMs.
+    double lo = 0.0, hi = total;
+    for (const auto& bl : x.blocks)
+    {
+        if (startMs >= bl.startMs && startMs < bl.endMs)
+            return -1;  // inside an existing opening
+        if (bl.endMs <= startMs) lo = juce::jmax (lo, bl.endMs);
+        if (bl.startMs >= startMs) hi = juce::jmin (hi, bl.startMs);
+    }
+    endMs = juce::jmin (endMs, hi);
+    if (endMs - startMs < limits::minCutBlockMs)
+    {
+        endMs = juce::jmin (hi, startMs + limits::minCutBlockMs);
+        startMs = juce::jmax (lo, endMs - limits::minCutBlockMs);
+        if (endMs - startMs < limits::minCutBlockMs - 1.0e-9)
+            return -1;
+    }
+    x.blocks.push_back ({ startMs, endMs, juce::jlimit (0.0, 1.0, level) });
+    x.blocks = normalisedBlocks (x.blocks);
+    x.custom = true;
+    x.enabled = true;
+    x.manualKind = ShaperSettings::ManualKind::Cuts;
+    apply (x, true);
+    for (int i = 0; i < numBlocks(); ++i)
+        if (std::abs (current()->blocks[(size_t) i].startMs - startMs) < 1.0e-6)
+            selBlock = i;
+    refreshButtons();
+    return selBlock;
+}
+
+void CurveEditor::moveBlock (int index, double startMs, bool commit)
+{
+    const auto* sh = current();
+    if (sh == nullptr || index < 0 || index >= (int) sh->blocks.size())
+        return;
+    auto x = *sh;
+    auto& bl = x.blocks[(size_t) index];
+    const double len = bl.endMs - bl.startMs;
+    const double lo = index > 0 ? x.blocks[(size_t) index - 1].endMs : 0.0;
+    const double hi = (index + 1 < (int) x.blocks.size() ? x.blocks[(size_t) index + 1].startMs : spanMs()) - len;
+    bl.startMs = juce::jlimit (lo, juce::jmax (lo, hi), startMs);
+    bl.endMs = bl.startMs + len;
+    apply (x, commit);
+}
+
+void CurveEditor::resizeBlock (int index, double startMs, double endMs, bool commit)
+{
+    const auto* sh = current();
+    if (sh == nullptr || index < 0 || index >= (int) sh->blocks.size())
+        return;
+    auto x = *sh;
+    auto& bl = x.blocks[(size_t) index];
+    const double lo = index > 0 ? x.blocks[(size_t) index - 1].endMs : 0.0;
+    const double hi = index + 1 < (int) x.blocks.size() ? x.blocks[(size_t) index + 1].startMs : spanMs();
+    const double newStart = juce::jlimit (lo, juce::jmax (lo, hi - limits::minCutBlockMs), startMs);
+    const double newEnd = juce::jlimit (juce::jmin (hi, newStart + limits::minCutBlockMs), hi, endMs);
+    if (newEnd - newStart < limits::minCutBlockMs - 1.0e-9)
+        return;  // no room, or shorter than the minimum: keep it as it was
+    bl.startMs = newStart;
+    bl.endMs = newEnd;
+    apply (x, commit);
+}
+
+void CurveEditor::setBlockLevel (int index, double level, bool commit)
+{
+    const auto* sh = current();
+    if (sh == nullptr || index < 0 || index >= (int) sh->blocks.size())
+        return;
+    auto x = *sh;
+    x.blocks[(size_t) index].level = juce::jlimit (0.0, 1.0, level);
+    apply (x, commit);
+}
+
+int CurveEditor::duplicateBlock (int index)
+{
+    const auto* sh = current();
+    if (sh == nullptr || index < 0 || index >= (int) sh->blocks.size())
+        return -1;
+    const auto bl = sh->blocks[(size_t) index];
+    const double len = bl.endMs - bl.startMs;
+    const double next = index + 1 < (int) sh->blocks.size() ? sh->blocks[(size_t) index + 1].startMs : spanMs();
+    // Right after it, keeping the same gap it has to the previous one when there is room.
+    const double gap = index > 0 ? juce::jmax (0.0, bl.startMs - sh->blocks[(size_t) index - 1].endMs) : 0.0;
+    double start = bl.endMs + gap;
+    if (start + len > next)
+        start = bl.endMs;
+    if (start + limits::minCutBlockMs > next)
+    {
+        note = u8 ("No hay sitio a la derecha para duplicar este corte");
+        refreshButtons();
+        return -1;
+    }
+    return addBlock (start, juce::jmin (next, start + len), bl.level);
+}
+
+void CurveEditor::removeBlock (int index)
+{
+    const auto* sh = current();
+    if (sh == nullptr || index < 0 || index >= (int) sh->blocks.size())
+        return;
+    auto x = *sh;
+    x.blocks.erase (x.blocks.begin() + index);
+    selBlock = -1;
+    apply (x, true);
+}
+
+// ---- grid -----------------------------------------------------------------------
+
+void CurveEditor::setGrid (bool on, double beats)
+{
+    gridOn = on;
+    gridBeats = juce::jlimit (1.0 / 64.0, 4.0, beats);
+    gridButton.setToggleState (on, juce::dontSendNotification);
+    repaint();
+}
+
+double CurveEditor::snapMs (double ms) const
+{
+    if (! gridOn)
+        return ms;
+    // Grid relative to the start of the repetition (its trigger moment), at the project tempo.
+    const double step = gridBeats * 60000.0 / ctx.processor.getProjectBpm();
+    const double offset = spanFractions().first * voiceSeconds() * 1000.0;
+    return std::round ((ms + offset) / step) * step - offset;
+}
+
+float CurveEditor::xForMs (double ms) const
+{
+    const double len = voiceSeconds();
+    return xForFraction (spanFractions().first + (len > 0.0 ? ms / 1000.0 / len : 0.0));
+}
+
+double CurveEditor::msAt (float x) const
+{
+    return (fractionAt (x) - spanFractions().first) * voiceSeconds() * 1000.0;
+}
+
+std::pair<int, CurveEditor::BlockHit> CurveEditor::blockAt (juce::Point<float> pos) const
+{
+    const auto* sh = current();
+    const auto c = canvasArea();
+    if (sh == nullptr || ! isCutsMode() || ! c.expanded (4.0f, 0.0f).contains (pos))
+        return { -1, BlockHit::None };
+    for (int i = 0; i < (int) sh->blocks.size(); ++i)
+    {
+        const auto& bl = sh->blocks[(size_t) i];
+        const float x0 = xForMs (bl.startMs), x1 = xForMs (bl.endMs);
+        const float edge = juce::jmin (6.0f, (x1 - x0) / 3.0f);
+        if (pos.x < x0 - 3.0f || pos.x > x1 + 3.0f)
+            continue;
+        if (std::abs (pos.x - x0) <= juce::jmax (3.0f, edge)) return { i, BlockHit::Left };
+        if (std::abs (pos.x - x1) <= juce::jmax (3.0f, edge)) return { i, BlockHit::Right };
+        if (std::abs (pos.y - yForGain (bl.level)) <= 6.0f) return { i, BlockHit::Top };
+        return { i, BlockHit::Body };
+    }
+    return { -1, BlockHit::None };
+}
+
+juce::String CurveEditor::blockLabel (int i) const
+{
+    const auto* sh = current();
+    if (sh == nullptr || i < 0 || i >= (int) sh->blocks.size())
+        return {};
+    const auto& bl = sh->blocks[(size_t) i];
+    return u8 ("corte ") + juce::String (i + 1) + ": " + juce::String (bl.startMs, 1) + u8 ("\xe2\x80\x93") + juce::String (bl.endMs, 1)
+           + " ms (" + juce::String (bl.endMs - bl.startMs, 1) + " ms), " + juce::String (bl.level * 100.0, 0) + " %";
+}
+
+void CurveEditor::nudge (double ms)
+{
+    if (isCutsMode() && selBlock >= 0)
+        moveBlock (selBlock, current()->blocks[(size_t) selBlock].startMs + ms, true);
+    else if (isPointsMode() && selected >= 0 && voiceSeconds() > 0.0)
+    {
+        const auto& pt = current()->curve[(size_t) selected];
+        const double span = spanMs();
+        movePoint (selected, pt.t + (span > 0.0 ? ms / span : 0.0), pt.gain, true);
+    }
+}
+
+void CurveEditor::showBlockMenu (int index)
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (blockLabel (index));
+    m.addItem ("Duplicar (Ctrl+D)", [this, index] { selectBlock (duplicateBlock (index)); });
+    m.addItem ("Eliminar (Supr)", [this, index] { removeBlock (index); });
+    juce::PopupMenu lv;
+    for (int pct : { 100, 75, 50, 25 })
+        lv.addItem (juce::String (pct) + " %", [this, index, pct] { setBlockLevel (index, pct / 100.0, true); });
+    m.addSubMenu ("Intensidad", lv);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+}
+
+void CurveEditor::showCanvasMenu()
+{
+    juce::PopupMenu m;
+    const auto* sh = current();
+    if (sh == nullptr)
+        return;
+    m.addItem (u8 ("Convertir cortes \xe2\x86\x92 puntos (reemplaza los puntos)"), ! sh->blocks.empty(), false, [this] { cutsToPoints(); });
+    m.addItem (u8 ("Crear cortes desde la curva actual (reemplaza los cortes)"), true, false, [this] { redetectCuts(); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+}
+
+void CurveEditor::viewChanged()
+{
+    hScroll.setCurrentRange (viewStart, viewEnd - viewStart, juce::dontSendNotification);
+    rebuildPeaks();
+    repaint();
+}
+
+void CurveEditor::scrollBarMoved (juce::ScrollBar*, double start)
+{
+    const double span = viewEnd - viewStart;
+    viewStart = juce::jlimit (0.0, 1.0 - span, start);
+    viewEnd = viewStart + span;
+    rebuildPeaks();
+    repaint();
+}
+
 // ---- geometry ----------------------------------------------------------------
 
 juce::Rectangle<float> CurveEditor::canvasArea() const
 {
     auto r = getLocalBounds().toFloat().reduced (12.0f, 8.0f);
     r.removeFromTop ((float) toolbarPx);
-    r.removeFromBottom (18.0f);
+    r.removeFromBottom (18.0f + 14.0f);  // help line + horizontal scroll bar
     r.removeFromTop (kRulerHeight);
     return r;
 }
@@ -544,7 +929,7 @@ double CurveEditor::gainAt (float y) const
 int CurveEditor::pointNear (juce::Point<float> pos) const
 {
     const auto* sh = current();
-    if (sh == nullptr || ! sh->custom)
+    if (sh == nullptr || ! isPointsMode())
         return -1;
     const auto [a, b] = spanFractions();
     int best = -1;
@@ -745,6 +1130,56 @@ void CurveEditor::paint (juce::Graphics& g)
         }
     }
 
+    // Cut blocks: borders, level handle, selection; time readout while dragging.
+    if (isCutsMode())
+    {
+        for (int i = 0; i < (int) sh->blocks.size(); ++i)
+        {
+            const auto& bl = sh->blocks[(size_t) i];
+            const float x0 = xForMs (bl.startMs), x1 = xForMs (bl.endMs);
+            if (x1 < c.getX() || x0 > c.getRight())
+                continue;
+            const bool sel = i == selBlock, hot = i == hoverBlock || i == dragBlock;
+            const auto box = juce::Rectangle<float>::leftTopRightBottom (juce::jmax (c.getX(), x0), yForGain (bl.level),
+                                                                         juce::jmin (c.getRight(), x1), c.getBottom());
+            g.setColour ((sel ? theme::amber : theme::violet).withAlpha (sel ? 0.22f : (hot ? 0.18f : 0.10f)));
+            g.fillRect (box);
+            g.setColour (sel ? theme::amber : theme::violet.brighter (0.3f));
+            const bool hl = hot && (hoverHit == BlockHit::Left || (dragBlock == i && dragHit == BlockHit::Left));
+            const bool hr = hot && (hoverHit == BlockHit::Right || (dragBlock == i && dragHit == BlockHit::Right));
+            g.fillRect (x0 - (hl ? 1.5f : 0.75f), box.getY(), hl ? 3.0f : 1.5f, box.getHeight());
+            g.fillRect (x1 - (hr ? 1.5f : 0.75f), box.getY(), hr ? 3.0f : 1.5f, box.getHeight());
+            if (x1 - x0 > 10.0f)
+                g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmin (16.0f, (x1 - x0) * 0.5f), 4.0f).withCentre ({ (x0 + x1) * 0.5f, box.getY() }), 2.0f);
+        }
+        if (dragBlock >= 0 || hoverBlock >= 0)
+        {
+            const int i = dragBlock >= 0 ? dragBlock : hoverBlock;
+            g.setColour (theme::text);
+            g.setFont (theme::font (11.0f, true));
+            const auto t = blockLabel (i);
+            const float tw = (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), t) + 12.0f;
+            auto bx = juce::Rectangle<float> (lastMouse.x + 12.0f, lastMouse.y - 22.0f, tw, 16.0f);
+            if (bx.getRight() > c.getRight()) bx.setX (lastMouse.x - tw - 12.0f);
+            g.setColour (theme::background.withAlpha (0.85f));
+            g.fillRoundedRectangle (bx, 3.0f);
+            g.setColour (theme::text);
+            g.drawText (t, bx, juce::Justification::centred);
+        }
+    }
+    if (dragging >= 0 || dragBlock >= 0)
+    {
+        // Time indicator: a line at the mouse with its exact ms in the ruler.
+        const double ms = dragBlock >= 0 && current() != nullptr && dragBlock < (int) current()->blocks.size()
+                              ? (dragHit == BlockHit::Right ? current()->blocks[(size_t) dragBlock].endMs : current()->blocks[(size_t) dragBlock].startMs)
+                              : msAt (lastMouse.x);
+        const float x = xForMs (ms);
+        g.setColour (theme::amber.withAlpha (0.8f));
+        g.drawVerticalLine ((int) x, ruler.getY(), c.getBottom());
+        g.setFont (theme::font (10.5f, true));
+        g.drawText (juce::String (ms, 1) + " ms", juce::Rectangle<float> (x + 3.0f, ruler.getY() + 2.0f, 70.0f, 12.0f), juce::Justification::left);
+    }
+
     g.setColour (theme::outline);
     g.drawRoundedRectangle (c.expanded (0.0f, kRulerHeight).withY (ruler.getY()), 6.0f, 1.0f);
 }
@@ -779,7 +1214,8 @@ void CurveEditor::resized()
         x += w + gapAfter;
     };
     place (generateButton, embedded ? 200 : 210, 10);
-    place (manualButton, 70);
+    place (manualButton, 104);
+    place (cutsButton, 104, 10);
     place (bakeButton, 110, 10);
     place (undoButton, 76);
     place (redoButton, 72, 10);
@@ -792,8 +1228,16 @@ void CurveEditor::resized()
     place (regionButton, 120, 10);
     for (auto* b : { &zoomInButton, &zoomOutButton, &zoomFitButton, &vZoomInButton, &vZoomOutButton })
         place (*b, 36);
+    x += 6;
+    place (gridButton, 70);
+    place (gridBox, 78);
     toolbarPx = (y + bh + 8) - top;
     help.setBounds (getLocalBounds().reduced (12, 8).removeFromBottom (16));
+    {
+        const auto c = canvasArea();
+        hScroll.setBounds ((int) c.getX(), (int) c.getBottom() + 2, (int) c.getWidth(), 10);
+        hScroll.setCurrentRange (viewStart, viewEnd - viewStart, juce::dontSendNotification);
+    }
     rebuildPeaks();
 }
 
@@ -808,11 +1252,61 @@ void CurveEditor::mouseDown (const juce::MouseEvent& e)
     const auto* sh = current();
     if (sh == nullptr)
         return;
-    if (rulerArea().contains (e.position) || (e.mods.isShiftDown() && canvasArea().contains (e.position)))
+    if (rulerArea().contains (e.position)
+        || (e.mods.isShiftDown() && canvasArea().contains (e.position) && pointNear (e.position) < 0 && blockAt (e.position).first < 0))
     {
         draggingSelection = true;
         dragAnchor = fractionAt (e.position.x);
         setSelection (std::nullopt);
+        return;
+    }
+    if (isCutsMode())
+    {
+        const auto [bi, hit] = blockAt (e.position);
+        if (e.mods.isPopupMenu())
+        {
+            if (bi >= 0) { selectBlock (bi); showBlockMenu (bi); }
+            else showCanvasMenu();
+            return;
+        }
+        note.clear();
+        if (bi >= 0)
+        {
+            selectBlock (bi);
+            dragBlock = bi;
+            dragHit = hit;
+            const auto& bl = current()->blocks[(size_t) bi];
+            dragMs0 = msAt (e.position.x);
+            dragStart0 = bl.startMs;
+            dragEnd0 = bl.endMs;
+            dragLevel0 = bl.level;
+            dragY0 = e.position.y;
+            return;
+        }
+        if (canvasArea().contains (e.position))
+        {
+            // Drag in an empty gap: a new opening from here to where the mouse goes.
+            const double ms = juce::jlimit (0.0, spanMs(), snapMs (msAt (e.position.x)));
+            const int idx = addBlock (ms, ms + limits::minCutBlockMs, 1.0);
+            if (idx >= 0)
+            {
+                dragBlock = idx;
+                dragHit = BlockHit::Right;
+                creatingBlock = true;
+                dragMs0 = ms;
+                dragStart0 = current()->blocks[(size_t) idx].startMs;
+                dragEnd0 = current()->blocks[(size_t) idx].endMs;
+            }
+            else
+            {
+                selectBlock (-1);
+            }
+        }
+        return;
+    }
+    if (e.mods.isPopupMenu() && pointNear (e.position) < 0 && canvasArea().contains (e.position))
+    {
+        showCanvasMenu();
         return;
     }
     const int near = pointNear (e.position);
@@ -824,6 +1318,7 @@ void CurveEditor::mouseDown (const juce::MouseEvent& e)
     if (near >= 0)
     {
         dragging = selected = near;
+        lastDragPos = e.position;
         repaint();
         return;
     }
@@ -845,17 +1340,64 @@ void CurveEditor::mouseDrag (const juce::MouseEvent& e)
         setSelection (std::pair { juce::jmin (dragAnchor, f), juce::jmax (dragAnchor, f) });
         return;
     }
+    // Shift: fine adjustment (a tenth of the mouse movement, no grid).
+    const bool fine = e.mods.isShiftDown();
+    if (dragBlock >= 0 && current() != nullptr && dragBlock < numBlocks())
+    {
+        const double mouseMs = msAt (e.position.x);
+        const double delta = (mouseMs - dragMs0) * (fine ? 0.1 : 1.0);
+        auto snap = [&] (double ms) { return fine ? ms : snapMs (ms); };
+        switch (dragHit)
+        {
+            case BlockHit::Body: moveBlock (dragBlock, snap (dragStart0 + delta), false); break;
+            case BlockHit::Left: resizeBlock (dragBlock, snap (dragStart0 + delta), dragEnd0, false); break;
+            case BlockHit::Right: resizeBlock (dragBlock, dragStart0, snap (dragEnd0 + delta), false); break;
+            case BlockHit::Top:
+            {
+                const double dy = (double) (dragY0 - e.position.y) / juce::jmax (1.0f, canvasArea().getHeight() - 8.0f);
+                setBlockLevel (dragBlock, dragLevel0 + dy * (fine ? 0.1 : 1.0), false);
+                break;
+            }
+            case BlockHit::None: break;
+        }
+        return;
+    }
     if (dragging >= 0)
     {
         const auto [a, b] = spanFractions();
-        const double t = b > a ? (fractionAt (e.position.x) - a) / (b - a) : 0.0;
-        movePoint (dragging, t, gainAt (e.position.y), false);
+        const auto* sh = current();
+        const double span = spanMs();
+        if (sh == nullptr || dragging >= (int) sh->curve.size() || span <= 0.0)
+            return;
+        double ms = msAt (e.position.x);
+        double g = gainAt (e.position.y);
+        if (fine)
+        {
+            const auto& pt = sh->curve[(size_t) dragging];
+            const double ms0 = pt.t * span;
+            ms = ms0 + (ms - msAt (lastDragPos.x)) * 0.1;
+            g = pt.gain + (g - gainAt (lastDragPos.y)) * 0.1;
+        }
+        else
+        {
+            ms = snapMs (ms);
+        }
+        lastDragPos = e.position;
+        movePoint (dragging, ms / span, g, false);
     }
 }
 
 void CurveEditor::mouseUp (const juce::MouseEvent&)
 {
     ctx.endGesture();
+    if (dragBlock >= 0)
+    {
+        record();
+        dragBlock = -1;
+        creatingBlock = false;
+        refreshButtons();
+        repaint();
+    }
     if (dragging >= 0)
     {
         record();
@@ -869,6 +1411,18 @@ void CurveEditor::mouseUp (const juce::MouseEvent&)
 void CurveEditor::mouseMove (const juce::MouseEvent& e)
 {
     lastMouse = e.position;
+    if (isCutsMode())
+    {
+        const auto [bi, hit] = blockAt (e.position);
+        hoverBlock = bi;
+        hoverHit = hit;
+        setMouseCursor (hit == BlockHit::Left || hit == BlockHit::Right ? juce::MouseCursor::LeftRightResizeCursor
+                        : hit == BlockHit::Top ? juce::MouseCursor::UpDownResizeCursor
+                        : hit == BlockHit::Body ? juce::MouseCursor::DraggingHandCursor
+                        : canvasArea().contains (e.position) ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+        return;
+    }
     const int h = pointNear (e.position);
     if (h != hovered)
     {
@@ -883,6 +1437,16 @@ void CurveEditor::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (! canvasArea().contains (e.position) || current() == nullptr)
         return;
+    if (isCutsMode())
+    {
+        if (blockAt (e.position).first >= 0)
+            return;
+        // A new opening one grid step long (free: 50 ms), centred on the click.
+        const double len = gridOn ? gridBeats * 60000.0 / ctx.processor.getProjectBpm() : 50.0;
+        const double at = gridOn ? snapMs (msAt (e.position.x) - len * 0.5) : msAt (e.position.x) - len * 0.5;
+        selectBlock (addBlock (juce::jmax (0.0, at), juce::jmax (0.0, at) + len, 1.0));
+        return;
+    }
     if (pointNear (e.position) >= 0)
         return;
     const auto [a, b] = spanFractions();
@@ -904,9 +1468,8 @@ void CurveEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
         const double delta = (wheel.deltaX != 0.0f ? -wheel.deltaX : wheel.deltaY) * span * 0.5;
         viewStart = juce::jlimit (0.0, 1.0 - span, viewStart - delta);
         viewEnd = viewStart + span;
-        repaint();
     }
-    rebuildPeaks();
+    viewChanged();
 }
 
 bool CurveEditor::keyPressed (const juce::KeyPress& k)
@@ -917,6 +1480,28 @@ bool CurveEditor::keyPressed (const juce::KeyPress& k)
     if (ctrl && k.getKeyCode() == 'Y') { redo(); return true; }
     if (ctrl && k.getKeyCode() == 'C') { copyCurve(); return true; }
     if (ctrl && k.getKeyCode() == 'V') { pasteCurve(); return true; }
+    if (k.getKeyCode() == juce::KeyPress::spaceKey)
+    {
+        if (const auto* p = ctx.primaryPoint(); p != nullptr && p->id != kLivePointId)
+            ctx.processor.requestTriggerPoint (p->id);
+        return true;
+    }
+    if (k.getKeyCode() == juce::KeyPress::leftKey || k.getKeyCode() == juce::KeyPress::rightKey)
+    {
+        const double step = k.getModifiers().isShiftDown() ? 0.1 : 1.0;
+        nudge (k.getKeyCode() == juce::KeyPress::leftKey ? -step : step);
+        return true;
+    }
+    if (ctrl && k.getKeyCode() == 'D' && isCutsMode() && selBlock >= 0)
+    {
+        selectBlock (duplicateBlock (selBlock));
+        return true;
+    }
+    if ((k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey) && isCutsMode() && selBlock >= 0)
+    {
+        removeBlock (selBlock);
+        return true;
+    }
     if (k.getKeyCode() == juce::KeyPress::deleteKey || k.getKeyCode() == juce::KeyPress::backspaceKey)
     {
         if (selected >= 0)

@@ -12,7 +12,7 @@
 namespace ses
 {
 
-class CurveEditor final : public juce::Component, private EditorContext::Listener
+class CurveEditor final : public juce::Component, private EditorContext::Listener, private juce::ScrollBar::Listener
 {
 public:
     explicit CurveEditor (EditorContext&);
@@ -38,7 +38,36 @@ public:
     void visibilityChanged() override;
 
     // ---- actions (also used by the tests) ------------------------------
-    void setManual (bool);                 // true: breakpoints (baked from the generator if there are none)
+    void setManual (bool);                 // true: «Editar puntos» (baked from the current shape if there are none)
+    // «Editar cortes»: openings as blocks (detected from the current shape if
+    // there are none yet). Points and cuts are both kept: switching never loses edits.
+    void setCutsMode (bool);
+    bool isCutsMode() const;
+    bool isPointsMode() const;
+    // Explicit conversions (they replace the target representation; the source stays).
+    bool cutsToPoints();                   // false (and a note) if it does not fit in the point limit
+    void redetectCuts();
+    juce::String lastNote() const { return note; }
+
+    // ---- cut blocks (ms from the start of the shaped span) --------------
+    int numBlocks() const;
+    int addBlock (double startMs, double endMs, double level = 1.0);  // -1 if it does not fit
+    void moveBlock (int index, double startMs, bool commit);          // keeps its length, stays between neighbours
+    void resizeBlock (int index, double startMs, double endMs, bool commit);
+    void setBlockLevel (int index, double level, bool commit);
+    int duplicateBlock (int index);                                   // right after it, if there is room
+    void removeBlock (int index);
+    int selectedBlock() const noexcept { return selBlock; }
+    void selectBlock (int index);
+    double spanMs() const;
+    // Grid: snaps positions to `beats` at the project tempo (relative to the start of the repetition).
+    void setGrid (bool on, double beats);
+    bool gridEnabled() const noexcept { return gridOn; }
+    double snapMs (double spanRelativeMs) const;
+    float xForMs (double spanRelativeMs) const;
+    double msAt (float x) const;
+    enum class BlockHit { None, Body, Left, Right, Top };
+    std::pair<int, BlockHit> blockAt (juce::Point<float>) const;
     void bakeFromGenerator();
     // «Generar cortes perfectos»: the generator (count, distribution, ramps,
     // pattern) over the time selection if there is one, else the current
@@ -107,9 +136,28 @@ private:
     bool draggingSelection = false;
     double dragAnchor = 0.0;
     juce::Point<float> lastMouse;
+    // cut editing
+    int selBlock = -1, hoverBlock = -1, dragBlock = -1;
+    BlockHit dragHit = BlockHit::None, hoverHit = BlockHit::None;
+    double dragMs0 = 0.0, dragStart0 = 0.0, dragEnd0 = 0.0, dragLevel0 = 1.0;
+    float dragY0 = 0.0f;
+    bool creatingBlock = false;
+    juce::Point<float> lastDragPos;
+    bool gridOn = false;
+    double gridBeats = 0.25;
+    juce::String note;
+    void showBlockMenu (int index);
+    void showCanvasMenu();
+    void nudge (double ms);
+    juce::String blockLabel (int index) const;
+    void viewChanged();
+    void scrollBarMoved (juce::ScrollBar*, double newRangeStart) override;
+    juce::ScrollBar hScroll { false };
+    juce::TextButton cutsButton { "Editar cortes" }, gridButton { "Rejilla" };
+    juce::ComboBox gridBox;
 
     juce::TextButton closeButton { "Cerrar" }, expandButton { "Ampliar" },
-        generateButton { juce::String::fromUTF8 ("Generar cortes perfectos") }, manualButton { "Manual" }, bakeButton { "Generar puntos" },
+        generateButton { juce::String::fromUTF8 ("Generar cortes perfectos") }, manualButton { "Editar puntos" }, bakeButton { "Generar puntos" },
         undoButton { "Deshacer" }, redoButton { "Rehacer" }, copyButton { "Copiar" }, pasteButton { "Pegar" },
         dupButton { "Duplicar" }, mirrorButton { "Espejo" }, previewButton { juce::String::fromUTF8 ("\xe2\x96\xb6 Escuchar") },
         storeBButton { "Guardar B" }, abButton { "A/B" }, regionButton { juce::String::fromUTF8 ("Selecci\xc3\xb3n \xe2\x86\x92 zona") },

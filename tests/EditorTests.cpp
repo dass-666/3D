@@ -7,6 +7,7 @@
 #include "ui/SpatialMap.h"
 #include "ui/PresetActions.h"
 #include "audio/EchoEngine.h"
+#include "audio/OfflineRender.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -681,4 +682,246 @@ TEST_CASE ("Live mode UI: the action bar turns it on and the panel edits the liv
         CHECK (ctx.primary().isEmpty());
         CHECK_FALSE (bar.liveSettingsButton.isVisible());
     }
+}
+
+namespace
+{
+juce::MouseEvent mouseAt (juce::Component& c, juce::Point<float> pos, juce::Point<float> from, bool dragged,
+                          juce::ModifierKeys m = juce::ModifierKeys::leftButtonModifier, int clicks = 1)
+{
+    const auto t0 = juce::Time::getCurrentTime();
+    return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), pos, m, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, t0, from, t0,
+                             clicks, dragged);
+}
+
+void drag (juce::Component& c, juce::Point<float> a, juce::Point<float> b, juce::ModifierKeys extra = {})
+{
+    const auto m = juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier | extra.getRawFlags());
+    c.mouseDown (mouseAt (c, a, a, false, m));
+    for (int i = 1; i <= 8; ++i)
+        c.mouseDrag (mouseAt (c, a + (b - a) * (float) i / 8.0f, a, true, m));
+    c.mouseUp (mouseAt (c, b, a, true, m));
+}
+} // namespace
+
+TEST_CASE ("Cut editing: blocks move, resize, change level, duplicate, delete, snap to the grid and sound as drawn")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());  // 1.2 s
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 40.0, 50.0 }, Timing { 0.0, 0.0 }); addPoint (s, { 60.0, 50.0 }, Timing { 1.0, 0.0 }); });
+    p.setUiMode (UiMode::Pro);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1240, 840);
+    auto& ctx = ed.getContext();
+    const auto id = ctx.scene().points[0].id;
+    const auto other = ctx.scene().points[1];
+    ctx.edit ([&] (Scene& s)
+    {
+        auto& sh = findPoint (s, id)->shaper;
+        sh.enabled = true;
+        sh.cuts = 4;  // 300 ms cuts, open half of each
+        sh.depthPercent = 100.0;
+    });
+    ctx.select (id, false);
+    auto& ce = ed.getCurveEditor();
+    ed.showCurveEditor (true);
+    REQUIRE (ce.voiceSeconds() > 1.1);
+
+    // «Editar cortes» starts from the generated shape: 4 openings, nothing else changes.
+    ce.setCutsMode (true);
+    REQUIRE (ce.isCutsMode());
+    REQUIRE (ce.numBlocks() == 4);
+    const auto b0 = ce.current()->blocks[0];
+    CHECK_THAT (b0.startMs, Catch::Matchers::WithinAbs (0.0, 3.0));
+    CHECK_THAT (b0.endMs, Catch::Matchers::WithinAbs (150.0, 6.0));
+    CHECK (findPoint (p.getSceneForUi(), other.id)->shaper == other.shaper);
+
+    // Exact edits through the API.
+    ce.moveBlock (1, 400.0, true);
+    CHECK_THAT (ce.current()->blocks[1].startMs, Catch::Matchers::WithinAbs (400.0, 1e-9));
+    const double len1 = ce.current()->blocks[1].endMs - ce.current()->blocks[1].startMs;
+    ce.moveBlock (1, 0.0, true);  // cannot cross the previous one
+    CHECK_THAT (ce.current()->blocks[1].startMs, Catch::Matchers::WithinAbs (ce.current()->blocks[0].endMs, 1e-9));
+    CHECK_THAT (ce.current()->blocks[1].endMs - ce.current()->blocks[1].startMs, Catch::Matchers::WithinAbs (len1, 1e-9));
+    ce.resizeBlock (1, 300.0, 302.5, true);
+    CHECK_THAT (ce.current()->blocks[1].endMs - ce.current()->blocks[1].startMs, Catch::Matchers::WithinAbs (2.5, 1e-9));
+    ce.resizeBlock (1, 300.0, 300.5, true);  // shorter than the minimum: refused
+    CHECK (ce.current()->blocks[1].endMs - ce.current()->blocks[1].startMs >= limits::minCutBlockMs);
+    ce.resizeBlock (1, 300.0, 420.0, true);
+    ce.setBlockLevel (1, 0.5, true);
+    CHECK (ce.current()->blocks[1].level == 0.5);
+    const int dup = ce.duplicateBlock (1);
+    REQUIRE (dup == 2);
+    CHECK (ce.numBlocks() == 5);
+    CHECK_THAT (ce.current()->blocks[2].endMs - ce.current()->blocks[2].startMs, Catch::Matchers::WithinAbs (120.0, 1e-6));
+    ce.removeBlock (2);
+    CHECK (ce.numBlocks() == 4);
+
+    // TA — TA-TA — TAAA — TA with the mouse: delete all, then drag in empty space.
+    while (ce.numBlocks() > 0)
+        ce.removeBlock (0);
+    auto x = [&] (double ms) { return ce.xForMs (ms); };
+    const float yMid = ce.canvasArea().getCentreY();
+    drag (ce, { x (0.0), yMid }, { x (80.0), yMid });
+    drag (ce, { x (250.0), yMid }, { x (300.0), yMid });
+    drag (ce, { x (340.0), yMid }, { x (390.0), yMid });
+    drag (ce, { x (550.0), yMid }, { x (900.0), yMid });
+    drag (ce, { x (1050.0), yMid }, { x (1120.0), yMid });
+    REQUIRE (ce.numBlocks() == 5);
+    const double pxMs = ce.spanMs() / ce.canvasArea().getWidth();  // one pixel in ms
+    CHECK_THAT (ce.current()->blocks[3].startMs, Catch::Matchers::WithinAbs (550.0, 2.0 * pxMs));
+    CHECK_THAT (ce.current()->blocks[3].endMs, Catch::Matchers::WithinAbs (900.0, 2.0 * pxMs));
+
+    // Body drag moves the whole cut; edge drag resizes; top drag changes the level.
+    const auto before = ce.current()->blocks[3];
+    drag (ce, { x (700.0), yMid + 40.0f }, { x (760.0), yMid + 40.0f });
+    CHECK_THAT (ce.current()->blocks[3].startMs - before.startMs, Catch::Matchers::WithinAbs (60.0, 2.0 * pxMs));
+    CHECK_THAT (ce.current()->blocks[3].endMs - ce.current()->blocks[3].startMs, Catch::Matchers::WithinAbs (before.endMs - before.startMs, 1e-6));
+    const auto moved = ce.current()->blocks[3];
+    drag (ce, { x (moved.endMs), yMid }, { x (moved.endMs + 40.0), yMid });
+    CHECK_THAT (ce.current()->blocks[3].endMs, Catch::Matchers::WithinAbs (moved.endMs + 40.0, 2.0 * pxMs));
+    CHECK_THAT (ce.current()->blocks[3].startMs, Catch::Matchers::WithinAbs (moved.startMs, 1e-9));
+    const float top = ce.yForGain (1.0);
+    const float mid3 = x ((moved.startMs + moved.endMs) * 0.5);
+    drag (ce, { mid3, top }, { mid3, ce.yForGain (0.25) });
+    CHECK_THAT (ce.current()->blocks[3].level, Catch::Matchers::WithinAbs (0.25, 0.02));
+
+    // One drag = one undo step (document history), and the curve editor's own history too.
+    const auto lv = ce.current()->blocks[3].level;
+    ctx.undo();
+    CHECK (ce.current()->blocks[3].level > lv + 0.5);
+    ctx.redo();
+    CHECK (ce.current()->blocks[3].level == lv);
+
+    // Grid: 1/16 at 120 BPM = 125 ms, relative to the repetition start.
+    ce.setGrid (true, 0.25);
+    drag (ce, { x (moved.startMs + 30.0), yMid + 40.0f }, { x (moved.startMs + 30.0 + 37.0), yMid + 40.0f });
+    const double s3 = ce.current()->blocks[3].startMs;
+    CHECK_THAT (std::fmod (s3, 125.0), Catch::Matchers::WithinAbs (0.0, 1e-6));
+    ce.setGrid (false, 0.25);
+
+    // Zoom down to milliseconds: x <-> ms stays exact.
+    ce.zoomBy (0.002, 0.5);
+    const float xa = ce.canvasArea().getCentreX();
+    CHECK_THAT (ce.xForMs (ce.msAt (xa)), Catch::Matchers::WithinAbs (xa, 0.01));
+    CHECK (ce.spanMs() / 1.0 > 0.0);
+    CHECK (ce.msAt (xa + 100.0f) - ce.msAt (xa) < 10.0);  // < 0.1 ms per pixel
+    ce.fitView();
+    snapshot (ed, "b10-cuts.png");
+
+    // What is drawn is what sounds: render this repetition and compare its level with blocksGainAt.
+    const auto sh = ce.current();
+    OfflineRenderSettings rs;
+    rs.sampleRate = 48000.0;
+    rs.mixPercent = 100.0f;
+    rs.onlyPointId = id;
+    auto scene = p.getSceneForUi();
+    auto& pt = *findPoint (scene, id);
+    // A steady tone instead of the voice, so levels can be compared.
+    auto toneSrc = std::make_shared<DecodedAudio>();
+    toneSrc->sampleRate = 48000.0;
+    toneSrc->buffer.setSize (1, 57600);
+    for (int i = 0; i < 57600; ++i)
+        toneSrc->buffer.setSample (0, i, (float) (0.5 * std::sin (2.0 * juce::MathConstants<double>::pi * 1000.0 * i / 48000.0)));
+    scene.source.trimStart = scene.source.trimEnd = 0;
+    pt.region = {};
+    auto r = renderOffline (scene, toneSrc.get(), rs);
+    REQUIRE (r.error.isEmpty());
+    for (const auto& bl : sh->blocks)
+    {
+        const double centre = (bl.startMs + bl.endMs) * 0.5;
+        const int at = (int) (centre * 48.0);
+        const float rmsIn = r.audio.getRMSLevel (0, at - 48, 96);
+        CHECK_THAT (rmsIn, Catch::Matchers::WithinAbs (0.3536 * blocksGainAt (*sh, centre), 0.02));
+    }
+    CHECK (r.audio.getRMSLevel (0, (int) (180.0 * 48), 960) < 0.005f);  // closed gap (80-250 ms), depth 100 %
+
+    // Points and cuts are both kept: switching tools loses nothing.
+    const auto blocks = ce.current()->blocks;
+    ce.setManual (true);
+    CHECK (ce.isPointsMode());
+    CHECK (ce.current()->blocks == blocks);
+    ce.setCutsMode (true);
+    CHECK (ce.current()->blocks == blocks);
+    CHECK (ce.cutsToPoints());
+    CHECK (ce.isPointsMode());
+    CHECK (ce.current()->blocks == blocks);
+
+    // Saved with the project and restored exactly; other repetitions untouched.
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    SpatialEchoProcessor q;
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (findPoint (q.getSceneForUi(), id)->shaper.blocks == blocks);
+    CHECK (findPoint (q.getSceneForUi(), other.id)->shaper == other.shaper);
+}
+
+TEST_CASE ("Point editing: drag in X and Y, never across neighbours, grid and fine mode; 256 cuts draw fast; too many cuts refuse to become points")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 50.0, 50.0 }, Timing { 0.0, 0.0 }); });
+    p.setUiMode (UiMode::Pro);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1240, 840);
+    auto& ctx = ed.getContext();
+    const auto id = ctx.scene().points[0].id;
+    ctx.select (id, false);
+    auto& ce = ed.getCurveEditor();
+    ed.showCurveEditor (true);
+    ctx.edit ([&] (Scene& s)
+    {
+        auto& sh = findPoint (s, id)->shaper;
+        sh.enabled = true;
+        sh.custom = true;
+        sh.curve = { { 0.0, 1.0 }, { 0.3, 0.2 }, { 0.6, 0.8 }, { 1.0, 1.0 } };
+    });
+    REQUIRE (ce.isPointsMode());
+    const float y = ce.yForGain (0.2);
+    const double span = ce.spanMs();
+    drag (ce, { ce.xForMs (0.3 * span), y }, { ce.xForMs (0.45 * span), ce.yForGain (0.5) });  // X and Y at once
+    CHECK_THAT (ce.current()->curve[1].t, Catch::Matchers::WithinAbs (0.45, 0.003));
+    CHECK_THAT (ce.current()->curve[1].gain, Catch::Matchers::WithinAbs (0.5, 0.01));
+    drag (ce, { ce.xForMs (0.45 * span), ce.yForGain (0.5) }, { ce.xForMs (0.9 * span), ce.yForGain (0.5) });
+    CHECK (ce.current()->curve[1].t <= ce.current()->curve[2].t);  // stops at its neighbour
+    // Fine (Shift): a tenth of the movement.
+    const double t0 = ce.current()->curve[1].t;
+    const float px = ce.xForMs (t0 * span);
+    drag (ce, { px, ce.yForGain (0.5) }, { px - 100.0f, ce.yForGain (0.5) }, juce::ModifierKeys::shiftModifier);
+    const double movedMs = (t0 - ce.current()->curve[1].t) * span;
+    CHECK_THAT (movedMs, Catch::Matchers::WithinAbs ((ce.msAt (px) - ce.msAt (px - 100.0f)) * 0.1, 1.0));
+    // Grid snaps the point's time.
+    ce.setGrid (true, 0.5);  // 250 ms
+    const float p1 = ce.xForMs (ce.current()->curve[1].t * span);
+    drag (ce, { p1, ce.yForGain (0.5) }, { ce.xForMs (260.0), ce.yForGain (0.5) });
+    CHECK_THAT (ce.current()->curve[1].t * span, Catch::Matchers::WithinAbs (250.0, 1e-6));
+    ce.setGrid (false, 0.5);
+
+    // 256 cuts: allowed as cuts, drawn quickly; as points they would exceed the limit: refused with a note.
+    ce.setCutsMode (true);
+    while (ce.numBlocks() > 0)
+        ce.removeBlock (0);
+    ctx.edit ([&] (Scene& s)
+    {
+        auto& sh = findPoint (s, id)->shaper;
+        sh.blocks.clear();
+        for (int i = 0; i < 300; ++i)
+            sh.blocks.push_back ({ i * 4.0, i * 4.0 + 2.0, 1.0 });
+        sh = clamped (sh);
+    });
+    CHECK (ce.numBlocks() == limits::maxCutBlocks);
+    const auto t1 = juce::Time::getMillisecondCounterHiRes();
+    for (int i = 0; i < 10; ++i)
+        ed.createComponentSnapshot (ed.getLocalBounds());
+    const double perFrame = (juce::Time::getMillisecondCounterHiRes() - t1) / 10.0;
+    CHECK (perFrame < 200.0);
+    CHECK_FALSE (ce.cutsToPoints());
+    CHECK (ce.lastNote().isNotEmpty());
+    CHECK (ce.isCutsMode());
 }
