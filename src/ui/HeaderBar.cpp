@@ -220,14 +220,15 @@ void HeaderBar::resized()
     easyButton.setBounds (modes.removeFromLeft (60));
     proButton.setBounds (modes);
     r.removeFromLeft (12);
-    sceneName.setBounds (r.removeFromLeft (130).withSizeKeepingCentre (130, 28));
+    const int nameW = compactLogo ? 96 : 130, histW = compactLogo ? 28 : 34;
+    sceneName.setBounds (r.removeFromLeft (nameW).withSizeKeepingCentre (nameW, 28));
     r.removeFromLeft (4);
     sceneMenu.setBounds (r.removeFromLeft (92).withSizeKeepingCentre (92, 30));
-    r.removeFromLeft (8);
-    undoButton.setBounds (r.removeFromLeft (34).withSizeKeepingCentre (34, 30));
+    r.removeFromLeft (6);
+    undoButton.setBounds (r.removeFromLeft (histW).withSizeKeepingCentre (histW, 30));
     r.removeFromLeft (3);
-    redoButton.setBounds (r.removeFromLeft (34).withSizeKeepingCentre (34, 30));
-    r.removeFromLeft (10);
+    redoButton.setBounds (r.removeFromLeft (histW).withSizeKeepingCentre (histW, 30));
+    r.removeFromLeft (8);
 
     // Right side, from the right edge.
     auto toggles = r.removeFromRight (96);
