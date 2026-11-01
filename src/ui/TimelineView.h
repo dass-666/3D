@@ -41,6 +41,8 @@ private:
         std::vector<double> sliceOffsets;  // stutter slices, beats after `beat`
         double sliceBeats = 0.0;
         bool pitchPending = false;
+        ShaperSettings shaper;             // drawn as a curve when enabled
+        double voiceSeconds = 0.0;         // length of one voice, for the curve
     };
 
     void sceneChanged() override { layoutBlocks(); repaint(); }
@@ -52,10 +54,13 @@ private:
     juce::Rectangle<float> blockRect (const Block&) const;
     const Block* hit (juce::Point<float>) const;
     double snap (double beat) const;
+    bool freeTime() const;      // scene in free time: the axis is seconds
+    double unitsPerBeat() const; // 1 in beats mode, seconds per beat in free mode
+    double currentBpm() const;
 
     EditorContext& ctx;
     bool pro = false;
-    juce::ComboBox rhythmBox;
+    juce::ComboBox rhythmBox, modeBox;
     juce::ToggleButton snapToggle { "Ajustar a la rejilla" };
     std::vector<Block> blocks;
     int lanes = 1;

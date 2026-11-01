@@ -25,6 +25,17 @@ TimelineView::TimelineView (EditorContext& c) : ctx (c)
     };
     rhythmBox.setTooltip (u8 ("Divisi\xc3\xb3n r\xc3\xadtmica: rejilla de la l\xc3\xadnea temporal y alineaci\xc3\xb3n del disparo"));
     addAndMakeVisible (rhythmBox);
+    modeBox.addItem ("Sincronizado al BPM", 1);
+    modeBox.addItem ("Tiempo libre (ms)", 2);
+    modeBox.setTooltip (u8 ("BPM: los momentos se miden en tiempos y siguen el tempo del proyecto. "
+                            "Libre: se miden en milisegundos y cambiar el BPM no los mueve."));
+    modeBox.onChange = [this]
+    {
+        const auto mode = modeBox.getSelectedId() == 2 ? TimeMode::Free : TimeMode::Beats;
+        const double bpm = currentBpm();
+        ctx.edit ([=] (Scene& s) { setTimeMode (s, mode, bpm); });
+    };
+    addAndMakeVisible (modeBox);
     snapToggle.setToggleState (true, juce::dontSendNotification);
     addChildComponent (snapToggle);
     layoutBlocks();
@@ -38,8 +49,8 @@ TimelineView::~TimelineView()
 void TimelineView::setProMode (bool shouldBePro)
 {
     pro = shouldBePro;
-    snapToggle.setVisible (pro);
-    if (! pro)
+    snapToggle.setVisible (pro || freeTime());
+    if (! pro && ! freeTime())
         snapToggle.setToggleState (true, juce::dontSendNotification);
 }
 
@@ -47,10 +58,22 @@ void TimelineView::resized()
 {
     auto top = getLocalBounds().reduced (14, 8).removeFromTop (24);
     top.removeFromLeft (230);
-    rhythmBox.setBounds (top.removeFromLeft (150));
+    modeBox.setBounds (top.removeFromLeft (170));
+    top.removeFromLeft (10);
+    rhythmBox.setBounds (top.removeFromLeft (140));
     top.removeFromLeft (12);
     snapToggle.setBounds (top.removeFromLeft (180));
 }
+
+bool TimelineView::freeTime() const { return ctx.scene().timeMode == TimeMode::Free; }
+
+double TimelineView::currentBpm() const
+{
+    const auto& snapH = ctx.processor.getHostSnapshot();
+    return snapH.hasBpm.load() ? snapH.bpm.load() : 120.0;
+}
+
+double TimelineView::unitsPerBeat() const { return freeTime() ? 60.0 / currentBpm() : 1.0; }
 
 juce::Rectangle<float> TimelineView::gridArea() const
 {
@@ -63,32 +86,39 @@ void TimelineView::layoutBlocks()
     for (int i = 0; i < (int) std::size (kDivisions); ++i)
         if (kDivisions[i] == scene.rhythm)
             rhythmBox.setSelectedItemIndex (i, juce::dontSendNotification);
+    modeBox.setSelectedId (freeTime() ? 2 : 1, juce::dontSendNotification);
+    snapToggle.setVisible (pro || freeTime());
 
-    // Fragment length in beats at the current tempo (visual only).
-    double fragmentBeats = 0.25;
+    // Axis unit: beats, or seconds in free time. Stutter/Division lengths are
+    // tempo-based, so they are converted with the current tempo (visual only).
+    const double bpm = currentBpm();
+    const double upb = unitsPerBeat();
+    double fragmentSeconds = 0.125;
     if (auto audio = ctx.processor.getSourceAudio())
     {
         const auto& src = scene.source;
         const auto total = (juce::int64) audio->buffer.getNumSamples();
         const auto end = src.trimEnd > src.trimStart ? juce::jmin (src.trimEnd, total) : total;
-        const double seconds = (double) (end - src.trimStart) / audio->sampleRate;
-        const auto& snapH = ctx.processor.getHostSnapshot();
-        const double bpm = snapH.hasBpm.load() ? snapH.bpm.load() : 120.0;
-        fragmentBeats = juce::jmax (0.05, seconds * bpm / 60.0);
+        fragmentSeconds = juce::jmax (0.025, (double) (end - src.trimStart) / audio->sampleRate);
     }
 
     blocks.clear();
     for (auto& p : scene.points)
     {
-        Block b { p.id, p.number, p.enabled, p.timing.beat, fragmentBeats, 0, {}, 0.0, ctx.processor.isPitchPending (p) };
+        const auto region = clamped (p.region);
+        const double voiceSeconds = fragmentSeconds * (region.end - region.start);
+        const double voiceUnits = juce::jmax (0.02, freeTime() ? voiceSeconds : voiceSeconds * bpm / 60.0);
+        Block b { p.id, p.number, p.enabled, freeTime() ? p.timing.seconds : p.timing.beat, voiceUnits, 0, {}, 0.0,
+                  ctx.processor.isPitchPending (p), clamped (p.shaper), voiceSeconds };
         if (p.stutter.enabled)
         {
             const auto st = clamped (p.stutter);
-            const double div = beatsPerDivision (st.division);
-            b.sliceBeats = div * st.sliceLengthPercent / 100.0;
+            const double div = beatsPerDivision (st.division) * upb;
+            b.sliceBeats = juce::jmin (voiceUnits, div * st.sliceLengthPercent / 100.0);
+            b.voiceSeconds = juce::jmin (voiceSeconds, beatsPerDivision (st.division) * 60.0 / bpm * st.sliceLengthPercent / 100.0);
             for (int k = 0; k < st.repeats; ++k)
-                b.sliceOffsets.push_back (st.offsetBeats + k * div);
-            b.lengthBeats = st.offsetBeats + (st.repeats - 1) * div + b.sliceBeats;
+                b.sliceOffsets.push_back (st.offsetBeats * upb + k * div);
+            b.lengthBeats = st.offsetBeats * upb + (st.repeats - 1) * div + b.sliceBeats;
         }
         blocks.push_back (std::move (b));
     }
@@ -109,7 +139,8 @@ void TimelineView::layoutBlocks()
         maxEnd = juce::jmax (maxEnd, b.beat + b.lengthBeats);
     }
     lanes = juce::jmax (1, (int) laneEnd.size());
-    lengthBeats = juce::jmax (8.0, std::ceil ((maxEnd + 1.0) / 4.0) * 4.0);
+    lengthBeats = freeTime() ? juce::jmax (4.0, std::ceil (maxEnd + 0.5))
+                             : juce::jmax (8.0, std::ceil ((maxEnd + 1.0) / 4.0) * 4.0);
 }
 
 float TimelineView::xForBeat (double b) const
@@ -128,7 +159,7 @@ double TimelineView::snap (double b) const
 {
     if (! snapToggle.getToggleState())
         return juce::jmax (0.0, b);
-    const double step = beatsPerStep (ctx.scene().rhythm);
+    const double step = beatsPerStep (ctx.scene().rhythm) * unitsPerBeat();
     return juce::jmax (0.0, std::round (b / step) * step);
 }
 
@@ -158,27 +189,32 @@ void TimelineView::paint (juce::Graphics& g)
     g.setColour (theme::background);
     g.fillRoundedRectangle (a.expanded (4.0f, 2.0f), 6.0f);
 
-    // Grid: steps (faint), beats, bars (strong). Labels above.
-    const double step = beatsPerStep (ctx.scene().rhythm);
+    // Grid: rhythm steps (faint), beats or seconds, bars (strong). Labels above.
+    const bool free = freeTime();
+    const double step = beatsPerStep (ctx.scene().rhythm) * unitsPerBeat();
+    const double major = 1.0;                 // one beat, or one second
+    const double strong = free ? 5.0 : 4.0;   // bar, or 5 s
     for (double b = 0.0; b <= lengthBeats + 1e-9; b += step)
     {
         const float x = xForBeat (b);
-        const bool bar = std::fmod (b + 1e-9, 4.0) < 1e-6;
-        const bool beatLine = std::fmod (b + 1e-9, 1.0) < 1e-6;
-        g.setColour (bar ? theme::outline.brighter (0.3f) : beatLine ? theme::outline : theme::grid);
+        g.setColour (theme::grid);
         g.drawVerticalLine ((int) x, a.getY() + 16.0f, a.getBottom());
-        if (beatLine)
-        {
-            g.setColour (bar ? theme::text : theme::textFaint);
-            g.setFont (theme::font (11.0f, bar));
-            const auto label = b < 1e-9 ? juce::String ("T") : juce::String ((int) std::round (b));
-            g.drawText (label, juce::Rectangle<float> (x - 12.0f, a.getY(), 24.0f, 14.0f), juce::Justification::centred);
-        }
+    }
+    for (double b = 0.0; b <= lengthBeats + 1e-9; b += major)
+    {
+        const float x = xForBeat (b);
+        const bool bar = std::fmod (b + 1e-9, strong) < 1e-6;
+        g.setColour (bar ? theme::outline.brighter (0.3f) : theme::outline);
+        g.drawVerticalLine ((int) x, a.getY() + 16.0f, a.getBottom());
+        g.setColour (bar ? theme::text : theme::textFaint);
+        g.setFont (theme::font (11.0f, bar));
+        const auto label = b < 1e-9 ? juce::String ("T") : juce::String ((int) std::round (b)) + (free ? " s" : "");
+        g.drawText (label, juce::Rectangle<float> (x - 16.0f, a.getY(), 32.0f, 14.0f), juce::Justification::centred);
     }
 
     g.setColour (theme::textFaint);
     g.setFont (theme::font (10.5f));
-    g.drawText ("beats", juce::Rectangle<float> (a.getX() - 36.0f, a.getY(), 32.0f, 14.0f), juce::Justification::centredRight);
+    g.drawText (free ? "seg" : "beats", juce::Rectangle<float> (a.getX() - 36.0f, a.getY(), 32.0f, 14.0f), juce::Justification::centredRight);
 
     for (auto& b : blocks)
     {
@@ -202,6 +238,34 @@ void TimelineView::paint (juce::Graphics& g)
                 const float x1 = juce::jmax (x0 + 2.0f, xForBeat (b.beat + off + b.sliceBeats) - 1.0f);
                 g.fillRoundedRectangle (juce::Rectangle<float> (x0, r.getY() + 2.0f, x1 - x0, r.getHeight() - 4.0f), 2.0f);
             }
+        }
+        if (b.shaper.enabled && b.voiceSeconds > 0.0)
+        {
+            // Volume Shaper curve over each voice (the repetition, or every slice).
+            const double divisionSeconds = beatsPerDivision (b.shaper.division) * 60.0 / currentBpm();
+            auto drawCurve = [&] (float x0, float x1)
+            {
+                juce::Path path;
+                const int steps = juce::jmax (8, (int) (x1 - x0));
+                for (int i = 0; i <= steps; ++i)
+                {
+                    const double t = b.voiceSeconds * i / steps;
+                    const float gN = shaperGain (b.shaper, juce::jmin (t, b.voiceSeconds * 0.99999), b.voiceSeconds, divisionSeconds);
+                    const float px = x0 + (x1 - x0) * (float) i / (float) steps;
+                    const float py = r.getBottom() - 2.0f - (r.getHeight() - 4.0f) * gN;
+                    if (i == 0)
+                        path.startNewSubPath (px, py);
+                    else
+                        path.lineTo (px, py);
+                }
+                g.setColour (juce::Colours::white.withAlpha (b.enabled ? 0.9f : 0.4f));
+                g.strokePath (path, juce::PathStrokeType (1.4f));
+            };
+            if (b.sliceOffsets.empty())
+                drawCurve (r.getX(), r.getRight());
+            else
+                for (double off : b.sliceOffsets)
+                    drawCurve (xForBeat (b.beat + off), juce::jmax (xForBeat (b.beat + off) + 2.0f, xForBeat (b.beat + off + b.sliceBeats) - 1.0f));
         }
         if (b.pitchPending)
         {
@@ -240,7 +304,8 @@ void TimelineView::updatePlayhead()
     double next = -1.0;
     if (refs > 0)
     {
-        const double since = ctx.processor.getCurrentBeat() - s.referenceBeat.load();
+        const double since = freeTime() ? ctx.processor.getCurrentSeconds() - s.referenceSeconds.load()
+                                        : ctx.processor.getCurrentBeat() - s.referenceBeat.load();
         if (since >= -1e-6 && since <= lengthBeats)
             next = juce::jmax (0.0, since);
     }
@@ -272,7 +337,7 @@ void TimelineView::mouseDown (const juce::MouseEvent& e)
         dragOrigins.clear();
         for (auto& id : ctx.selection())
             if (auto* p = findPoint (ctx.scene(), id))
-                dragOrigins.push_back ({ id, p->timing.beat });
+                dragOrigins.push_back ({ id, freeTime() ? p->timing.seconds : p->timing.beat });
         return;
     }
     if (! additive && gridArea().contains (e.position))
@@ -285,10 +350,16 @@ void TimelineView::mouseDrag (const juce::MouseEvent& e)
         return;
     const double delta = beatAt (e.position.x) - dragStartBeat;
     const auto origins = dragOrigins;
+    const bool free = freeTime();
     ctx.edit ([&] (Scene& s)
     {
         for (auto& [id, origin] : origins)
-            setTiming (s, id, { snap (origin + delta) });
+            if (auto* p = findPoint (s, id))
+            {
+                auto t = p->timing;
+                (free ? t.seconds : t.beat) = snap (origin + delta);
+                setTiming (s, id, t);
+            }
     });
 }
 

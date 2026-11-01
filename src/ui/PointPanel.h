@@ -40,8 +40,9 @@ private:
 
     juce::Label title, presetNote, pendingNote, emptyNote, pitchStatus;
     juce::ComboBox presetBox;
-    juce::Slider pitch, gain, posX, posY, beat;
-    juce::Label pitchL, gainL, posXL, posYL, beatL, presetL, soundInfo;
+    juce::Slider pitch, gain, posX, posY, beat, regionStart, regionEnd;
+    juce::Label pitchL, gainL, posXL, posYL, beatL, regionStartL, regionEndL, presetL, soundInfo;
+    bool freeTime = false;
     juce::TextButton triggerButton { "Disparar esta" };
     juce::ToggleButton enabledToggle { "Activa" }, soloToggle { "Solo" };
     juce::TextButton duplicateButton { "Duplicar" }, deleteButton { "Eliminar" };
@@ -53,6 +54,14 @@ private:
     juce::Slider repeats, sliceLength, offset, stutterGain, manualStart, manualEnd;
     juce::Label regionL, divisionL, repeatsL, sliceLengthL, offsetL, stutterGainL, manualStartL, manualEndL;
     juce::TextButton copyButton { "Copiar Stutter" }, pasteButton { "Pegar Stutter" };
+
+    // Volume Shaper
+    juce::Label shaperTitle, shaperNote;
+    juce::ToggleButton shaperToggle { "Activar" }, shaperWholeToggle { juce::String::fromUTF8 ("Toda la repetici\xc3\xb3n") };
+    juce::ComboBox shaperPresetBox, shapeBox, rateBox, shaperDivisionBox;
+    juce::Slider cuts, periodMs, depth, openWidth, shaperFade, accel, shaperRegionStart, shaperRegionEnd;
+    juce::Label shaperPresetL, shapeL, rateL, shaperDivisionL, cutsL, periodMsL, depthL, openWidthL, shaperFadeL, accelL,
+                shaperRegionStartL, shaperRegionEndL;
 
 };
 

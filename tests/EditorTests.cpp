@@ -90,6 +90,7 @@ TEST_CASE ("Editor: builds, paints, and map/panel/timeline share one model in bo
         s.points[0].solo = true;
         s.points[2].stutter.enabled = true;  // slices visible on the timeline
         s.points[2].stutter.repeats = 6;
+        s.points[3].shaper = shaperPresets()[0].settings;  // Gate: curve visible on the timeline
     });
     ctx.refreshIfChanged();
     CHECK (ctx.scene().points[1].timing.beat == 0.0);
@@ -99,6 +100,7 @@ TEST_CASE ("Editor: builds, paints, and map/panel/timeline share one model in bo
     snapshot (*ed, "ui-easy.png");
 
     // Pro mode: same state, more precision; switching back loses nothing.
+    p.editScene ([] (Scene& s) { setTimeMode (s, TimeMode::Free, 120.0); });  // seconds axis in the Pro snapshot
     const auto before = p.getSceneForUi();
     p.setUiMode (UiMode::Pro);
     std::unique_ptr<juce::AudioProcessorEditor> pro (p.createEditor());

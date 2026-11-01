@@ -32,6 +32,7 @@ void HostSnapshot::store (const TransportInfo& t, int numSamples, const EngineSt
     for (; k < kMaxKeys; ++k)
         soundingKeys[(size_t) k].store (0, std::memory_order_relaxed);
     referenceBeat.store (s.lastReferenceBeat, std::memory_order_relaxed);
+    referenceSeconds.store (s.lastReferenceSeconds, std::memory_order_relaxed);
     references.store (s.references, std::memory_order_relaxed);
     constexpr auto r = std::memory_order_relaxed;
     hasBpm.store (t.bpm.has_value(), r);

@@ -134,6 +134,7 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     engine.process (buffer, plan, transport, req, wetStart, wetEnd);
     plans.release();
     currentBeat.store (engine.currentBeat());
+    currentSeconds.store (engine.currentSeconds());
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (outputDb->load()));
     if (! outputGain.isSmoothing())

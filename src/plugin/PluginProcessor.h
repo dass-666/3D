@@ -100,6 +100,7 @@ public:
     const HostSnapshot& getHostSnapshot() const noexcept { return hostSnapshot; }
     DiagnosticLog& getDiagnostics() noexcept { return diagnostics; }
     double getCurrentBeat() const noexcept { return currentBeat.load(); }
+    double getCurrentSeconds() const noexcept { return currentSeconds.load(); }  // engine sample clock
 
     void refreshPlan() { rebuildPlan(); }  // message thread
 
@@ -122,7 +123,7 @@ private:
     std::atomic<bool> previewRequested { false }, fragmentRequested { false }, triggerRequested { false };
     std::atomic<juce::uint64> pointTrigger { 0 };
     PitchRenderer pitchRenderer;
-    std::atomic<double> currentBeat { 0.0 };
+    std::atomic<double> currentBeat { 0.0 }, currentSeconds { 0.0 };
     std::atomic<UiMode> uiMode { UiMode::Easy };
     bool lastTrigger = false;
     HostSnapshot hostSnapshot;
