@@ -14,11 +14,14 @@ constexpr StutterSettings::Region kRegions[] { StutterSettings::Region::Whole, S
 const char* kRegionNames[] { "Fragmento completo", "Inicio", "Final", "Selecci\xc3\xb3n manual" };
 constexpr StutterSettings::Division kDivisions[] { StutterSettings::Division::Quarter, StutterSettings::Division::Eighth,
                                                    StutterSettings::Division::Sixteenth, StutterSettings::Division::ThirtySecond };
+constexpr ShaperSettings::Distribution kDists[] { ShaperSettings::Distribution::Uniform, ShaperSettings::Distribution::Accelerating,
+                                                  ShaperSettings::Distribution::Decelerating };
+const char* kDistNames[] { "Uniforme", "Acelerando", "Desacelerando" };
 constexpr ShaperSettings::Shape kShapes[] { ShaperSettings::Shape::Square, ShaperSettings::Shape::Triangle, ShaperSettings::Shape::Saw };
 const char* kShapeNames[] { "Cuadrada", "Triangular", "Diente de sierra" };
 constexpr ShaperSettings::RateMode kRates[] { ShaperSettings::RateMode::Count, ShaperSettings::RateMode::Milliseconds,
                                               ShaperSettings::RateMode::Division };
-const char* kRateNames[] { "N\xc2\xba de cortes (uniformes)", "Milisegundos", "Divisi\xc3\xb3n del BPM" };
+const char* kRateNames[] { "N\xc2\xba de cortes", "Milisegundos", "Divisi\xc3\xb3n del BPM" };
 }
 
 std::optional<StutterSettings> PointPanel::stutterClipboard;
@@ -250,35 +253,74 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
         if (i >= 0)
             editPrimary ([d = kDivisions[i]] (Scene&, Point& p) { p.shaper.division = d; });
     };
+    for (int i = 0; i < (int) std::size (kDists); ++i)
+        distBox.addItem (u8 (kDistNames[i]), i + 1);
+    distBox.onChange = [this]
+    {
+        const int i = distBox.getSelectedItemIndex();
+        if (i >= 0)
+            editPrimary ([v = kDists[i]] (Scene& s, Point& p) { auto x = p.shaper; x.distribution = v; setShaper (s, p.id, x); });
+    };
     shaperPresetL.setText ("Preset", juce::dontSendNotification);
     shapeL.setText ("Forma", juce::dontSendNotification);
     rateL.setText ("Ritmo", juce::dontSendNotification);
     shaperDivisionL.setText (u8 ("Divisi\xc3\xb3n"), juce::dontSendNotification);
-    for (auto* l : { &shaperPresetL, &shapeL, &rateL, &shaperDivisionL })
+    distL.setText (u8 ("Distribuci\xc3\xb3n"), juce::dontSendNotification);
+    patternL.setText (u8 ("Patr\xc3\xb3n"), juce::dontSendNotification);
+    for (auto* l : { &shaperPresetL, &shapeL, &rateL, &shaperDivisionL, &distL, &patternL })
     {
         l->setFont (theme::font (12.5f));
         l->setColour (juce::Label::textColourId, theme::textDim);
         content.addAndMakeVisible (*l);
     }
-    for (auto* b : { &shapeBox, &rateBox, &shaperDivisionBox })
+    for (auto* b : { &shapeBox, &rateBox, &shaperDivisionBox, &distBox })
         content.addAndMakeVisible (*b);
-    setupSlider (cuts, cutsL, "Cortes", 2, 32, 1, "");
-    setupSlider (periodMs, periodMsL, "Periodo", 10, 4000, 1, " ms");
+    setupSlider (cuts, cutsL, "Cortes", limits::minShaperCuts, limits::maxShaperCuts, 1, "");
+    cuts.setSkewFactorFromMidPoint (32.0);
+    setupSlider (periodMs, periodMsL, "Periodo", limits::minShaperPeriodMs, limits::maxShaperPeriodMs, 1, " ms");
     periodMs.setSkewFactorFromMidPoint (200.0);
     setupSlider (depth, depthL, "Profundidad", 0, 100, 1, " %");
     setupSlider (openWidth, openWidthL, "Apertura", 5, 95, 1, " %");
-    setupSlider (shaperFade, shaperFadeL, "Fundido", 0, 50, 0.5, " ms");
-    setupSlider (accel, accelL, u8 ("Aceleraci\xc3\xb3n"), 0, 100, 1, " %");
+    setupSlider (shaperAttack, shaperAttackL, "Ataque", limits::minShaperRampMs, limits::maxShaperAttackMs, 0.1, " ms");
+    shaperAttack.setSkewFactorFromMidPoint (3.0);
+    setupSlider (shaperRelease, shaperReleaseL, u8 ("Liberaci\xc3\xb3n"), limits::minShaperRampMs, limits::maxShaperReleaseMs, 0.1, " ms");
+    shaperRelease.setSkewFactorFromMidPoint (10.0);
+    setupSlider (accel, accelL, "Intensidad", 0, 100, 1, " %");
+    setupSlider (shaperLength, shaperLengthL, u8 ("Duraci\xc3\xb3n"), 0, 4000, 1, " ms");
+    shaperLength.setSkewFactorFromMidPoint (500.0);
+    shaperLength.textFromValueFunction = [] (double v) { return v <= 0.0 ? juce::String ("hasta el final") : juce::String ((int) v) + " ms"; };
+    setupSlider (makeup, makeupL, "Ganancia post", -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb, 0.5, " dB");
     setupSlider (shaperRegionStart, shaperRegionStartL, "Inicio zona", 0, 100, 1, " %");
     setupSlider (shaperRegionEnd, shaperRegionEndL, "Fin zona", 0, 100, 1, " %");
-    openWidth.setTooltip (u8 ("Parte de cada corte que queda abierta (forma cuadrada)"));
-    shaperFade.setTooltip (u8 ("Suavizado anticlic de cada borde"));
-    accel.setTooltip (u8 ("Solo con N\xc2\xba de cortes: los cortes se acortan progresivamente"));
+    openWidth.setTooltip (u8 ("Parte de cada corte que queda abierta (forma cuadrada). Menos apertura = m\xc3\xa1s silencio y menos nivel medio."));
+    shaperAttack.setTooltip (u8 ("Rampa lineal al abrir cada corte. Corta conserva el transitorio; larga suaviza."));
+    shaperRelease.setTooltip (u8 ("Rampa lineal al cerrar cada corte."));
+    accel.setTooltip (u8 ("Cu\xc3\xa1nto se acortan o alargan los cortes seg\xc3\xban la distribuci\xc3\xb3n (solo N\xc2\xba de cortes)"));
+    shaperLength.setTooltip (u8 ("Duraci\xc3\xb3n de la zona cortada; 0 = hasta el final de la zona"));
+    makeup.setTooltip (u8 ("Ganancia tras la curva. El limitador de salida sigue protegiendo."));
+    autoLevelToggle.setTooltip (u8 ("Recupera el nivel RMS que quitan los silencios (m\xc3\xa1ximo +6 dB)"));
+    patternEdit.setTooltip (u8 ("x = corte abierto, . = corte mudo; se repite. Vac\xc3\xado = todos abiertos."));
+    patternEdit.setInputRestrictions (64, "x.X");
+    patternEdit.setFont (theme::font (13.0f));
+    patternEdit.onReturnKey = [this] { patternEdit.giveAwayKeyboardFocus(); };
+    patternEdit.onFocusLost = [this]
+    {
+        editPrimary ([v = patternEdit.getText().toLowerCase()] (Scene& s, Point& p) { auto x = p.shaper; x.pattern = v; setShaper (s, p.id, x); });
+    };
+    content.addAndMakeVisible (patternEdit);
+    shaperHint.setFont (theme::font (11.0f));
+    shaperHint.setColour (juce::Label::textColourId, theme::textDim);
+    content.addAndMakeVisible (shaperHint);
     cuts.onValueChange = [this] { editPrimary ([v = (int) cuts.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.cuts = v; setShaper (s, p.id, x); }); };
     periodMs.onValueChange = [this] { editPrimary ([v = periodMs.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.periodMs = v; setShaper (s, p.id, x); }); };
     depth.onValueChange = [this] { editPrimary ([v = depth.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.depthPercent = v; setShaper (s, p.id, x); }); };
     openWidth.onValueChange = [this] { editPrimary ([v = openWidth.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.openPercent = v; setShaper (s, p.id, x); }); };
-    shaperFade.onValueChange = [this] { editPrimary ([v = shaperFade.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.fadeMs = v; setShaper (s, p.id, x); }); };
+    shaperAttack.onValueChange = [this] { editPrimary ([v = shaperAttack.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.attackMs = v; setShaper (s, p.id, x); }); };
+    shaperRelease.onValueChange = [this] { editPrimary ([v = shaperRelease.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.releaseMs = v; setShaper (s, p.id, x); }); };
+    shaperLength.onValueChange = [this] { editPrimary ([v = shaperLength.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.lengthMs = v; setShaper (s, p.id, x); }); };
+    makeup.onValueChange = [this] { editPrimary ([v = makeup.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.makeupDb = v; setShaper (s, p.id, x); }); };
+    autoLevelToggle.onClick = [this] { editPrimary ([on = autoLevelToggle.getToggleState()] (Scene& s, Point& p) { auto x = p.shaper; x.autoLevel = on; setShaper (s, p.id, x); }); };
+    content.addAndMakeVisible (autoLevelToggle);
     accel.onValueChange = [this] { editPrimary ([v = accel.getValue()] (Scene& s, Point& p) { auto x = p.shaper; x.accelPercent = v; setShaper (s, p.id, x); }); };
     shaperWholeToggle.onClick = [this] { editPrimary ([on = shaperWholeToggle.getToggleState()] (Scene& s, Point& p) { auto x = p.shaper; x.wholeVoice = on; setShaper (s, p.id, x); }); };
     content.addAndMakeVisible (shaperWholeToggle);
@@ -497,14 +539,54 @@ void PointPanel::refresh()
     setIfIdle (periodMs, sh.periodMs);
     setIfIdle (depth, sh.depthPercent);
     setIfIdle (openWidth, sh.openPercent);
-    setIfIdle (shaperFade, sh.fadeMs);
+    setIfIdle (shaperAttack, sh.attackMs);
+    setIfIdle (shaperRelease, sh.releaseMs);
     setIfIdle (accel, sh.accelPercent);
+    setIfIdle (shaperLength, sh.lengthMs);
+    setIfIdle (makeup, sh.makeupDb);
+    for (int i = 0; i < (int) std::size (kDists); ++i)
+        if (kDists[i] == sh.distribution)
+            distBox.setSelectedItemIndex (i, juce::dontSendNotification);
+    if (! patternEdit.hasKeyboardFocus (true))
+        patternEdit.setText (sh.pattern, juce::dontSendNotification);
+    autoLevelToggle.setToggleState (sh.autoLevel, juce::dontSendNotification);
+    {
+        // What the curve really does to the level, so nobody has to guess.
+        double fragmentSeconds = 0.0;
+        if (auto audio = ctx.processor.getSourceAudio())
+        {
+            const auto& src = ctx.scene().source;
+            const auto total = (juce::int64) audio->buffer.getNumSamples();
+            const auto end = src.trimEnd > src.trimStart ? juce::jmin (src.trimEnd, total) : total;
+            fragmentSeconds = juce::jmax (0.0, (double) (end - src.trimStart) / audio->sampleRate);
+        }
+        const double voiceSeconds = fragmentSeconds * juce::jmax (0.0, p->region.end - p->region.start);
+        juce::String hint;
+        if (sh.enabled && sh.rateMode == ShaperSettings::RateMode::Count && voiceSeconds > 0.0)
+        {
+            double a = 0.0, b = 0.0;
+            shaperSpan (sh, voiceSeconds, a, b);
+            const int useful = maxUsefulCuts (sh, b - a);
+            hint << u8 ("M\xc3\xa1x. \xc3\xbatil aqu\xc3\xad: ") << useful << " cortes";
+            if (sh.cuts > useful)
+                hint << u8 (" (los sobrantes ser\xc3\xa1n s\xc3\xb3lo chasquidos)");
+            hint << ". ";
+        }
+        if (sh.enabled)
+        {
+            const float level = shaperLevelGain (sh, voiceSeconds, 0.125);
+            hint << "Nivel: " << juce::String (juce::Decibels::gainToDecibels (level), 1) << " dB";
+        }
+        shaperHint.setText (hint, juce::dontSendNotification);
+    }
     shaperWholeToggle.setToggleState (sh.wholeVoice, juce::dontSendNotification);
     setIfIdle (shaperRegionStart, sh.regionStart * 100.0);
     setIfIdle (shaperRegionEnd, sh.regionEnd * 100.0);
     for (juce::Component* c : { (juce::Component*) &shapeBox, (juce::Component*) &rateBox, (juce::Component*) &shaperDivisionBox,
                                 (juce::Component*) &cuts, (juce::Component*) &periodMs, (juce::Component*) &depth,
-                                (juce::Component*) &openWidth, (juce::Component*) &shaperFade, (juce::Component*) &accel,
+                                (juce::Component*) &openWidth, (juce::Component*) &shaperAttack, (juce::Component*) &shaperRelease,
+                                (juce::Component*) &accel, (juce::Component*) &distBox, (juce::Component*) &patternEdit,
+                                (juce::Component*) &shaperLength, (juce::Component*) &makeup, (juce::Component*) &autoLevelToggle,
                                 (juce::Component*) &shaperWholeToggle, (juce::Component*) &shaperRegionStart,
                                 (juce::Component*) &shaperRegionEnd })
         c->setEnabled (sh.enabled);
@@ -609,8 +691,15 @@ int PointPanel::layoutContent (int width)
     labelled (shaperDivisionL, shaperDivisionBox, rate == 2);
     labelled (depthL, depth);
     labelled (openWidthL, openWidth, shapeBox.getSelectedItemIndex() <= 0);
-    labelled (accelL, accel, pro && rate <= 0);
-    labelled (shaperFadeL, shaperFade, pro);
+    labelled (distL, distBox, rate <= 0);
+    labelled (accelL, accel, rate <= 0 && distBox.getSelectedItemIndex() > 0);
+    labelled (shaperAttackL, shaperAttack, pro);
+    labelled (shaperReleaseL, shaperRelease, pro);
+    labelled (patternL, patternEdit, pro);
+    labelled (shaperLengthL, shaperLength, pro);
+    labelled (makeupL, makeup, pro);
+    autoLevelToggle.setBounds (row (24));
+    shaperHint.setBounds (row (16));
     shaperWholeToggle.setVisible (pro);
     if (pro)
         shaperWholeToggle.setBounds (row (24));

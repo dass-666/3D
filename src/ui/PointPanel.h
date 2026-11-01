@@ -62,11 +62,14 @@ private:
 
     // Volume Shaper
     juce::Label shaperTitle, shaperNote;
-    juce::ToggleButton shaperToggle { "Activar" }, shaperWholeToggle { juce::String::fromUTF8 ("Toda la repetici\xc3\xb3n") };
-    juce::ComboBox shaperPresetBox, shapeBox, rateBox, shaperDivisionBox;
-    juce::Slider cuts, periodMs, depth, openWidth, shaperFade, accel, shaperRegionStart, shaperRegionEnd;
-    juce::Label shaperPresetL, shapeL, rateL, shaperDivisionL, cutsL, periodMsL, depthL, openWidthL, shaperFadeL, accelL,
-                shaperRegionStartL, shaperRegionEndL;
+    juce::ToggleButton shaperToggle { "Activar" }, shaperWholeToggle { juce::String::fromUTF8 ("Toda la repetici\xc3\xb3n") },
+                       autoLevelToggle { juce::String::fromUTF8 ("Nivel autom\xc3\xa1tico (hasta +6 dB)") };
+    juce::ComboBox shaperPresetBox, shapeBox, rateBox, shaperDivisionBox, distBox;
+    juce::Slider cuts, periodMs, depth, openWidth, shaperAttack, shaperRelease, accel, shaperLength, makeup,
+                 shaperRegionStart, shaperRegionEnd;
+    juce::TextEditor patternEdit;
+    juce::Label shaperPresetL, shapeL, rateL, shaperDivisionL, distL, cutsL, periodMsL, depthL, openWidthL, shaperAttackL,
+                shaperReleaseL, accelL, shaperLengthL, makeupL, patternL, shaperHint, shaperRegionStartL, shaperRegionEndL;
 
 };
 
