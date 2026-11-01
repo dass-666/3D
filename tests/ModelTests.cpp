@@ -1,6 +1,10 @@
 #include "model/DemoScene.h"
 #include "model/Scene.h"
+#include "model/UserPresets.h"
 #include "model/VoicePresets.h"
+
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -223,4 +227,73 @@ TEST_CASE ("Built-in voice presets are all processed for real; Monster/Robot/Fan
         CHECK ((cp.sound || cp.shaper || cp.effects));
     }
     CHECK (pointPresets().size() == 13);
+}
+
+TEST_CASE ("User presets: saved to a file, reloaded, favourites kept, removal, applied to a point without touching position or timing")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-presets-" + juce::String (juce::Random::getSystemRandom().nextInt (1 << 30)));
+    const auto file = dir.getChildFile ("presets.json");
+    {
+        UserPresetStore store (file);
+        Point src;
+        src.id = "x"; src.number = 7;
+        src.position = { 10.0, 90.0 };
+        src.timing.beat = 3.0;
+        src.gainDb = -4.0;
+        src.sound.pitchSemitones = 5.0;
+        src.shaper.enabled = true; src.shaper.cuts = 24; src.shaper.accelPercent = 30.0;
+        src.effects.delay.enabled = true; src.effects.chainOrder = "dcmr";
+        const auto id = store.addFromPoint ("Mi corte", "prueba", src);
+        CHECK (id.startsWith ("user."));
+        CHECK (store.presets().size() == 1);
+        store.setFavourite (id, true);
+        store.setFavourite ("fast-gate", true);
+        CHECK (store.isFavourite (id));
+        CHECK (file.existsAsFile());
+
+        Point dst;
+        dst.id = "y"; dst.number = 2; dst.position = { 50.0, 50.0 }; dst.timing.beat = 1.0; dst.gainDb = 0.0;
+        applyUserPreset (dst, *store.find (id));
+        CHECK (dst.position == Position { 50.0, 50.0 });
+        CHECK_THAT (dst.timing.beat, Catch::Matchers::WithinAbs (1.0, 1e-12));
+        CHECK_THAT (dst.gainDb, Catch::Matchers::WithinAbs (0.0, 1e-12));
+        CHECK (dst.id == "y");
+        CHECK (dst.number == 2);
+        CHECK_THAT (dst.sound.pitchSemitones, Catch::Matchers::WithinAbs (5.0, 1e-12));
+        CHECK (dst.shaper.cuts == 24);
+        CHECK (dst.effects.delay.enabled);
+        CHECK (dst.effects.chainOrder == "dcmr");
+        CHECK (dst.creativePreset == id);
+    }
+    {
+        UserPresetStore store (file);
+        REQUIRE (store.load().wasOk());
+        REQUIRE (store.presets().size() == 1);
+        const auto& p = store.presets()[0];
+        CHECK (p.name == "Mi corte");
+        CHECK (p.content.shaper.cuts == 24);
+        CHECK_THAT (p.content.shaper.accelPercent, Catch::Matchers::WithinAbs (30.0, 1e-9));
+        CHECK (p.content.effects.chainOrder == "dcmr");
+        CHECK (store.isFavourite (p.id));
+        CHECK (store.isFavourite ("fast-gate"));
+        CHECK (store.remove (p.id));
+        CHECK (store.presets().empty());
+        CHECK (! store.isFavourite (p.id));
+        CHECK (! store.remove ("nope"));
+    }
+    // Damaged file: an error, not a crash; an empty id is regenerated.
+    file.replaceWithText ("{ \"format\": \"spatial-echo-user-presets\", \"formatVersion\": 1, \"presets\": [ { \"name\": \"sin id\", \"point\": {} }, 5 ] }");
+    {
+        UserPresetStore store (file);
+        REQUIRE (store.load().wasOk());
+        REQUIRE (store.presets().size() == 1);
+        CHECK (store.presets()[0].id.startsWith ("user."));
+    }
+    file.replaceWithText ("not json");
+    {
+        UserPresetStore store (file);
+        CHECK (store.load().failed());
+    }
+    dir.deleteRecursively();
 }

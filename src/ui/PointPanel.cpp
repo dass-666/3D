@@ -144,19 +144,21 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     creativeL.setColour (juce::Label::textColourId, theme::textDim);
     content.addAndMakeVisible (creativeL);
     creativeBox.setTextWhenNothingSelected (u8 ("Elegir\xe2\x80\xa6"));
-    {
-        int cid = 1;
-        for (auto& cp : pointPresets())
-            creativeBox.addItem (u8 (cp.name), cid++);
-    }
+    rebuildCreativeBox();
+    UserPresetStore::shared().addChangeListener (this);
     creativeBox.setTooltip (u8 ("Aplica cortes, efectos y/o voz a las repeticiones seleccionadas. Todo con procesamiento real."));
     creativeBox.onChange = [this]
     {
-        const int idx = creativeBox.getSelectedItemIndex();
+        const int id = creativeBox.getSelectedId();
         const auto& presets = pointPresets();
-        if (idx < 0 || idx >= (int) presets.size())
-            return;
-        editSelection ([&preset = presets[(size_t) idx]] (Scene&, Point& p) { applyPointPreset (p, preset); });
+        if (id >= 1 && id <= (int) presets.size())
+            editSelection ([&preset = presets[(size_t) id - 1]] (Scene&, Point& p) { applyPointPreset (p, preset); });
+        else if (id > 1000)
+        {
+            const auto& user = UserPresetStore::shared().presets();
+            if (id - 1001 < (int) user.size())
+                editSelection ([up = user[(size_t) id - 1001]] (Scene&, Point& p) { applyUserPreset (p, up); });
+        }
         creativeBox.setSelectedId (0, juce::dontSendNotification);
     };
     content.addAndMakeVisible (creativeBox);
@@ -574,7 +576,25 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
 
 PointPanel::~PointPanel()
 {
+    UserPresetStore::shared().removeChangeListener (this);
     ctx.removeListener (this);
+}
+
+void PointPanel::rebuildCreativeBox()
+{
+    creativeBox.clear (juce::dontSendNotification);
+    int cid = 1;
+    for (auto& cp : pointPresets())
+        creativeBox.addItem (u8 (cp.name), cid++);
+    const auto& user = UserPresetStore::shared().presets();
+    if (! user.empty())
+    {
+        creativeBox.addSeparator();
+        creativeBox.addSectionHeading (u8 ("Propios"));
+        int uid = 1001;
+        for (auto& up : user)
+            creativeBox.addItem (up.name, uid++);
+    }
 }
 
 void PointPanel::setupSlider (juce::Slider& s, juce::Label& l, const juce::String& name, double lo, double hi, double step,

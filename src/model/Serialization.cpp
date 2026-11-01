@@ -1,4 +1,5 @@
 #include "model/Serialization.h"
+#include "model/UserPresets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -763,6 +764,76 @@ LoadResult<std::vector<VoicePreset>> voicePresetsFromJson (const juce::String& j
     }
 
     result.value = std::move (presets);
+    return result;
+}
+
+juce::String userPresetsToJson (const UserPresetFile& f)
+{
+    auto root = obj();
+    set (root, "format", "spatial-echo-user-presets");
+    set (root, "formatVersion", 1);
+    juce::Array<var> arr;
+    for (auto& p : f.presets)
+    {
+        auto o = obj();
+        set (o, "id", p.id);
+        set (o, "name", p.name);
+        set (o, "description", p.description);
+        set (o, "point", pointToVar (p.content));
+        arr.add (o);
+    }
+    set (root, "presets", arr);
+    juce::Array<var> fav;
+    for (auto& id : f.favourites)
+        fav.add (id);
+    set (root, "favourites", fav);
+    return juce::JSON::toString (root, juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::multiLine).withMaxDecimalPlaces (17));
+}
+
+LoadResult<UserPresetFile> userPresetsFromJson (const juce::String& json)
+{
+    LoadResult<UserPresetFile> result;
+    auto header = parseAndCheckHeader (json, "spatial-echo-user-presets", 1);
+    if (! header)
+    {
+        result.error = header.error;
+        return result;
+    }
+    Reader reader { result.warnings };
+    UserPresetFile f;
+    std::set<juce::String> ids;
+    if (const auto* arr = header.value->getProperty ("presets", var()).getArray())
+    {
+        int i = 0;
+        for (auto& v : *arr)
+        {
+            const auto where = "presets[" + juce::String (i++) + "]";
+            if (! v.isObject())
+            {
+                result.warnings.add (where + ": not an object, skipped");
+                continue;
+            }
+            UserPointPreset p;
+            p.id = Reader::text (v, "id");
+            if (p.id.isEmpty() || ids.count (p.id) > 0)
+            {
+                p.id = "user." + makeId();
+                result.warnings.add (where + ": missing or duplicate id, regenerated");
+            }
+            ids.insert (p.id);
+            p.name = Reader::text (v, "name", "Preset");
+            p.description = Reader::text (v, "description");
+            const auto pt = v.getProperty ("point", var());
+            if (pt.isObject())
+                p.content = reader.point (pt, where + ".point");
+            f.presets.push_back (std::move (p));
+        }
+    }
+    if (const auto* fav = header.value->getProperty ("favourites", var()).getArray())
+        for (auto& v : *fav)
+            if (v.isString())
+                f.favourites.addIfNotAlreadyThere (v.toString());
+    result.value = std::move (f);
     return result;
 }
 

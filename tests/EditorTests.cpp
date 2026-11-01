@@ -3,6 +3,7 @@
 
 #include "plugin/PluginProcessor.h"
 #include "ui/PluginEditor.h"
+#include "model/UserPresets.h"
 #include "ui/SpatialMap.h"
 #include "audio/EchoEngine.h"
 
@@ -321,6 +322,10 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
 TEST_CASE ("Pro layout: quick controls edit the generator, generate perfect cuts, sections, navigation, mode switch")
 {
     juce::ScopedJuceInitialiser_GUI init;
+    // User presets go to a temporary file in the tests, never to the real user folder.
+    const auto presetFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-ui-presets.json");
+    presetFile.deleteFile();
+    UserPresetStore::overrideSharedFile (presetFile);
     SpatialEchoProcessor p;
     p.prepareToPlay (48000.0, 512);
     REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
@@ -407,7 +412,24 @@ TEST_CASE ("Pro layout: quick controls edit the generator, generate perfect cuts
     sb.stepPreset (+1);
     CHECK (ctx.scene().points[0].creativePreset == pointPresets()[0].id);
     sb.stepPreset (-1);
-    CHECK (ctx.scene().points[0].creativePreset == pointPresets().back().id);
+    const auto lastId = ctx.scene().points[0].creativePreset;
+    CHECK ((lastId == pointPresets().back().id || UserPresetStore::shared().find (lastId) != nullptr));
+
+    // Save the repetition as a user preset: it joins the cycle, applies to another point, and is a favourite.
+    sb.stepPreset (+1);
+    ctx.edit ([&] (Scene& s) { findPoint (s, id0)->shaper.cuts = 77; });
+    const auto userId = sb.saveSelectionAsPreset ("Mi preset");
+    REQUIRE (userId.startsWith ("user."));
+    CHECK (ctx.scene().points[0].creativePreset == userId);
+    CHECK (UserPresetStore::shared().find (userId) != nullptr);
+    ctx.select (ctx.scene().points[2].id, false);
+    sb.applyPreset (userId);
+    CHECK (ctx.scene().points[2].shaper.cuts == 77);
+    CHECK (ctx.scene().points[2].creativePreset == userId);
+    UserPresetStore::shared().setFavourite (userId, true);
+    CHECK (UserPresetStore::shared().isFavourite (userId));
+    CHECK (UserPresetStore::shared().remove (userId));
+    ctx.select (id0, false);
 
     // Sections: a category opens its section and shows its controls; the centre tabs switch views.
     ed.getPointPanel().showSection ("reverb");

@@ -27,6 +27,11 @@ struct LoadResult
 juce::String toJson (const Document&);
 LoadResult<Document> documentFromJson (const juce::String& json);
 
+// User creative presets + favourites file.
+struct UserPresetFile;
+juce::String userPresetsToJson (const UserPresetFile&);
+LoadResult<UserPresetFile> userPresetsFromJson (const juce::String& json);
+
 // Only user presets are written; built-ins ship with the plugin.
 juce::String voicePresetsToJson (const std::vector<VoicePreset>& userPresets);
 LoadResult<std::vector<VoicePreset>> voicePresetsFromJson (const juce::String& json);

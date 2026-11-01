@@ -54,6 +54,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TimelineView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/CurveEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ProSidebar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/model/UserPresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Diagnostics.cpp)
