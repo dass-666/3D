@@ -641,3 +641,44 @@ TEST_CASE ("Export panel: options, background render, draggable result")
     snapshot (ed, "b9-export.png");
     st.file.deleteFile();
 }
+
+TEST_CASE ("Live mode UI: the action bar turns it on and the panel edits the live chain in both modes")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 40.0, 50.0 }); });
+    for (auto mode : { UiMode::Easy, UiMode::Pro })
+    {
+        p.setUiMode (mode);
+        p.editScene ([] (Scene& s) { s.live.enabled = false; });
+        std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+        auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+        ed.setSize (1240, 840);
+        auto& ctx = ed.getContext();
+        auto& bar = ed.getActionBar();
+        CHECK_FALSE (bar.liveSettingsButton.isVisible());
+        bar.liveButton.onClick();
+        CHECK (ctx.scene().live.enabled);
+        CHECK (ctx.primary() == kLivePointId);
+        CHECK (bar.liveSettingsButton.isVisible());
+        CHECK (bar.liveButton.getToggleState());
+
+        // The panel edits the live point through the usual controls (same model as the repetitions).
+        ctx.edit ([] (Scene& s) { if (auto* lp = findPoint (s, kLivePointId)) lp->effects.reverb.enabled = true; });
+        CHECK (p.getSceneForUi().live.fx.effects.reverb.enabled);
+        CHECK (ctx.scene().points.size() == 1);  // never added as a repetition
+        snapshot (ed, mode == UiMode::Pro ? "b9-live-pro.png" : "b9-live-easy.png");
+
+        // A repetition can be selected and edited while live stays on; «Ajustes» returns to it.
+        ctx.select (ctx.scene().points[0].id, false);
+        CHECK (ctx.scene().live.enabled);
+        bar.liveSettingsButton.onClick();
+        CHECK (ctx.primary() == kLivePointId);
+
+        bar.liveButton.onClick();
+        CHECK_FALSE (ctx.scene().live.enabled);
+        CHECK (ctx.primary().isEmpty());
+        CHECK_FALSE (bar.liveSettingsButton.isVisible());
+    }
+}

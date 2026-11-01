@@ -46,6 +46,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/PointFx.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/OfflineRender.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/LiveChain.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Theme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/HeaderBar.cpp

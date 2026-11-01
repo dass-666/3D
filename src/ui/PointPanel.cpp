@@ -138,6 +138,36 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     presetNote.setColour (juce::Label::textColourId, theme::textDim);
     content.addAndMakeVisible (presetNote);
 
+    liveToggle.setTooltip (u8 ("Activa o detiene el procesado continuo del audio que entra en esta pista del Mixer"));
+    liveToggle.onClick = [this] { const bool on = liveToggle.getToggleState(); ctx.edit ([on] (Scene& s) { s.live.enabled = on; }); };
+    content.addChildComponent (liveToggle);
+    setupSlider (liveWet, liveWetL, "Dry/Wet", 0.0, 100.0, 1.0, " %");
+    liveWet.setTooltip (u8 ("0 % = la seÃ±" "al original sin tocar Â· 100 % = solo la seÃ±" "al procesada"));
+    liveWet.onValueChange = [this] { const double v = liveWet.getValue(); ctx.edit ([v] (Scene& s) { s.live.wetPercent = v; }); };
+    liveCycleL.setText (u8 ("Ciclo de cortes"), juce::dontSendNotification);
+    liveCycleL.setFont (theme::font (12.5f));
+    liveCycleL.setColour (juce::Label::textColourId, theme::textDim);
+    content.addChildComponent (liveCycleL);
+    for (auto [beats, name] : { std::pair { 0.5, "1/8 (medio tiempo)" }, std::pair { 1.0, "1 tiempo" }, std::pair { 2.0, "2 tiempos" },
+                                std::pair { 4.0, "1 comp\xc3\xa1s (4 tiempos)" }, std::pair { 8.0, "2 compases" },
+                                std::pair { 16.0, "4 compases" } })
+        liveCycleBox.addItem (juce::String::fromUTF8 (name), (int) (beats * 4.0));
+    liveCycleBox.setTooltip (u8 ("Duraci\xc3\xb3n del Volume Shaper en vivo: se repite en bucle, alineado con los tiempos de FL Studio"));
+    liveCycleBox.onChange = [this]
+    {
+        const double beats = liveCycleBox.getSelectedId() / 4.0;
+        if (beats > 0.0)
+            ctx.edit ([beats] (Scene& s) { s.live.cycleBeats = beats; });
+    };
+    content.addChildComponent (liveCycleBox);
+    liveNote.setFont (theme::font (11.0f));
+    liveNote.setColour (juce::Label::textColourId, theme::textDim);
+    liveNote.setJustificationType (juce::Justification::topLeft);
+    liveNote.setText (u8 ("Procesa en continuo lo que entra en esta pista: filtros, cortes (en ciclo), car\xc3\xa1" "cter, modulaci\xc3\xb3n, delay, reverb y paneo. "
+                          "Pitch, formantes y Stutter no se aplican en vivo (usa \xc2\xab" "Capturar\xc2\xbb + repeticiones). Latencia: 0 muestras."),
+                      juce::dontSendNotification);
+    content.addChildComponent (liveNote);
+
     // Creative presets: a whole recipe (sound, curve and/or effect chain) for the selection.
     creativeL.setText ("Preset creativo", juce::dontSendNotification);
     creativeL.setFont (theme::font (12.5f));
@@ -691,6 +721,15 @@ void PointPanel::refresh()
     title.setText (u8 ("Repetici\xc3\xb3n ") + juce::String (p->number)
                        + (count > 1 ? "  (+" + juce::String (count - 1) + ")" : juce::String()),
                    juce::dontSendNotification);
+    if (editingLive())
+    {
+        const auto& live = ctx.scene().live;
+        title.setText (u8 ("Mixer en vivo"), juce::dontSendNotification);
+        liveToggle.setToggleState (live.enabled, juce::dontSendNotification);
+        if (! liveWet.isMouseButtonDown())
+            liveWet.setValue (live.wetPercent, juce::dontSendNotification);
+        liveCycleBox.setSelectedId ((int) std::lround (live.cycleBeats * 4.0), juce::dontSendNotification);
+    }
 
     int presetIndex = -1;
     const auto& presets = builtInVoicePresets();
@@ -883,7 +922,8 @@ void PointPanel::refresh()
 
 void PointPanel::paint (juce::Graphics& g)
 {
-    theme::drawPanel (g, getLocalBounds().toFloat(), u8 ("REPETICI\xc3\x93N SELECCIONADA"));
+    theme::drawPanel (g, getLocalBounds().toFloat(), editingLive() ? u8 ("MIXER EN VIVO \xc2\xb7 EFECTOS SOBRE LA ENTRADA")
+                                                                   : u8 ("REPETICI\xc3\x93N SELECCIONADA"));
     if (const auto* p = ctx.primaryPoint())
     {
         const auto t = title.getBounds().toFloat().translated ((float) viewport.getX(), (float) (viewport.getY() - viewport.getViewPositionY()));
@@ -919,8 +959,14 @@ void PointPanel::showSection (const juce::String& id)
         viewport.setViewPosition (0, juce::jmax (0, it->second - 4));
 }
 
+bool PointPanel::editingLive() const
+{
+    return ctx.primary() == kLivePointId;
+}
+
 int PointPanel::layoutContent (int width)
 {
+    const bool live = editingLive();
     auto r = juce::Rectangle<int> (0, 0, width, 10000);
     bool open = true;  // of the section being laid out
     auto row = [&] (int h) { auto x = r.removeFromTop (h); r.removeFromTop (3); return x; };
@@ -940,8 +986,16 @@ int PointPanel::layoutContent (int width)
         l.setBounds (x.removeFromLeft (104));
         c.setBounds (x);
     };
-    auto section = [&] (const char* id, SectionHeader& h, juce::ToggleButton* toggle = nullptr)
+    auto section = [&] (const char* id, SectionHeader& h, juce::ToggleButton* toggle = nullptr, bool visible = true)
     {
+        h.setVisible (visible);
+        if (toggle != nullptr)
+            toggle->setVisible (visible);
+        if (! visible)
+        {
+            open = false;  // everything in it is hidden by place()/labelled()
+            return;
+        }
         r.removeFromTop (6);
         sectionY[id] = r.getY();
         auto x = row (24);
@@ -955,12 +1009,22 @@ int PointPanel::layoutContent (int width)
     };
 
     auto head = row (28);
-    triggerButton.setBounds (head.removeFromRight (108));
+    triggerButton.setVisible (! live);
+    liveToggle.setVisible (live);
+    (live ? (juce::Component&) liveToggle : (juce::Component&) triggerButton).setBounds (head.removeFromRight (108));
     title.setBounds (head.withTrimmedLeft (18));
     r.removeFromTop (2);
-    labelled (presetL, presetBox);
-    presetNote.setBounds (row (28).withTrimmedLeft (104));
+    labelled (liveWetL, liveWet, live);
+    labelled (liveCycleL, liveCycleBox, live);
+    place (liveNote, 44, live);
+    labelled (presetL, presetBox, ! live);
+    presetNote.setVisible (! live);
+    if (! live)
+        presetNote.setBounds (row (28).withTrimmedLeft (104));
     labelled (creativeL, creativeBox);
+    for (auto* b : { (juce::Component*) &enabledToggle, (juce::Component*) &soloToggle, (juce::Component*) &duplicateButton, (juce::Component*) &deleteButton })
+        b->setVisible (! live);
+    if (! live)
     {
         auto actions = row (30);
         const int w = actions.getWidth() / 4;
@@ -975,7 +1039,7 @@ int PointPanel::layoutContent (int width)
 
     auto layoutSound = [&]
     {
-        section ("pitch", soundTitle);
+        section ("pitch", soundTitle, nullptr, ! live);
         pitchL.setVisible (open); pitch.setVisible (open); pitchStatus.setVisible (open);
         if (open)
         {
@@ -988,7 +1052,7 @@ int PointPanel::layoutContent (int width)
     };
     auto layoutTime = [&]
     {
-        section ("time", timeTitle);
+        section ("time", timeTitle, nullptr, ! live);
         labelled (beatL, beat);
         labelled (regionStartL, regionStart, pro);
         labelled (regionEndL, regionEnd, pro);
@@ -1002,7 +1066,7 @@ int PointPanel::layoutContent (int width)
     };
     auto layoutStutter = [&]
     {
-        section ("stutter", stutterTitle, &stutterToggle);
+        section ("stutter", stutterTitle, &stutterToggle, ! live);
         copyButton.setVisible (open); pasteButton.setVisible (open);
         if (open)
         {
@@ -1026,9 +1090,9 @@ int PointPanel::layoutContent (int width)
     auto layoutFilters = [&]
     {
         section ("filters", effectsTitle);
-        labelled (fadeInL, fadeIn);
-        labelled (fadeOutL, fadeOut);
-        place (reverseToggle, 24);
+        labelled (fadeInL, fadeIn, ! live);
+        labelled (fadeOutL, fadeOut, ! live);
+        place (reverseToggle, 24, ! live);
         labelled (lowpassL, lowpass);
         labelled (highpassL, highpass);
         place (effectsNote, 16);
@@ -1096,11 +1160,11 @@ int PointPanel::layoutContent (int width)
         labelled (makeupL, makeup, pro);
         place (autoLevelToggle, 24);
         place (shaperHint, 16);
-        place (shaperWholeToggle, 24, pro);
-        const bool zone = pro && ! shaperWholeToggle.getToggleState();
+        place (shaperWholeToggle, 24, pro && ! live);
+        const bool zone = pro && ! live && ! shaperWholeToggle.getToggleState();
         labelled (shaperRegionStartL, shaperRegionStart, zone);
         labelled (shaperRegionEndL, shaperRegionEnd, zone);
-        place (curveEditorButton, 26);
+        place (curveEditorButton, 26, ! live);
         place (shaperNote, 30);
     };
 

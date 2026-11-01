@@ -105,6 +105,8 @@ int CurveEditor::numPoints() const
 double CurveEditor::voiceSeconds() const
 {
     const auto* p = ctx.primaryPoint();
+    if (p != nullptr && p->id == kLivePointId)  // live: one cycle at the project tempo
+        return clamped (ctx.scene().live).cycleBeats * 60.0 / ctx.processor.getProjectBpm();
     auto audio = ctx.processor.getSourceAudio();
     if (p == nullptr || audio == nullptr || audio->sampleRate <= 0.0)
         return 0.0;
@@ -183,8 +185,10 @@ void CurveEditor::selectionChanged()
         if (p != nullptr)
             record();
     }
-    title.setText (p != nullptr ? u8 ("Curva de volumen \xc2\xb7 repetici\xc3\xb3n ") + juce::String (p->number)
-                                : u8 ("Curva de volumen \xc2\xb7 sin repetici\xc3\xb3n seleccionada"),
+    const bool live = p != nullptr && p->id == kLivePointId;
+    title.setText (live ? u8 ("Curva de volumen \xc2\xb7 Mixer en vivo (un ciclo)")
+                        : p != nullptr ? u8 ("Curva de volumen \xc2\xb7 repetici\xc3\xb3n ") + juce::String (p->number)
+                                       : u8 ("Curva de volumen \xc2\xb7 sin repetici\xc3\xb3n seleccionada"),
                    juce::dontSendNotification);
     rebuildPeaks();
     refreshButtons();
@@ -220,6 +224,8 @@ void CurveEditor::refreshButtons()
     regionButton.setEnabled (has && selection.has_value());
     for (auto* b : { &manualButton, &bakeButton, &previewButton, &storeBButton, &generateButton })
         b->setEnabled (has && voiceSeconds() > 0.0);
+    if (const auto* p = ctx.primaryPoint(); p != nullptr && p->id == kLivePointId)
+        previewButton.setEnabled (false);  // live: the curve plays on the incoming audio
     generateButton.setButtonText (selection ? u8 ("Generar cortes en la selecci\xc3\xb3n") : u8 ("Generar cortes perfectos"));
 
     juce::String text;

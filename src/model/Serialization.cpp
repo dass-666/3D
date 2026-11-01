@@ -217,6 +217,13 @@ var sceneToVar (const Scene& s)
     for (auto& p : s.points)
         points.add (pointToVar (p));
     set (o, "points", points);
+
+    auto live = obj();
+    set (live, "enabled", s.live.enabled);
+    set (live, "wetPercent", s.live.wetPercent);
+    set (live, "cycleBeats", s.live.cycleBeats);
+    set (live, "point", pointToVar (s.live.fx));
+    set (o, "live", live);
     return o;
 }
 
@@ -563,6 +570,16 @@ struct Reader
                     s.points.push_back (point (arr->getReference (i), where + ".points[" + juce::String (i) + "]"));
             }
         }
+        // Optional (B9): scenes saved before have no live block and load with it off.
+        if (const auto live = o.getProperty ("live", var()); live.isObject())
+        {
+            s.live.enabled = flag (live, "enabled", false);
+            s.live.wetPercent = number (live, "wetPercent", 100.0, 0.0, 100.0, where + ".live");
+            s.live.cycleBeats = number (live, "cycleBeats", 4.0, 0.25, 16.0, where + ".live");
+            if (const auto lp = live.getProperty ("point", var()); lp.isObject())
+                s.live.fx = point (lp, where + ".live.point");
+            s.live = clamped (s.live);
+        }
         return s;
     }
 };
@@ -575,7 +592,7 @@ void repairIdentity (Scene& scene, juce::StringArray& warnings)
 
     for (auto& p : scene.points)
     {
-        if (p.id.isEmpty() || seenIds.count (p.id) > 0)
+        if (p.id.isEmpty() || seenIds.count (p.id) > 0 || p.id == kLivePointId)
         {
             warnings.add ("scene " + scene.id + ": point with missing/duplicate id got a new id");
             p.id = makeId();

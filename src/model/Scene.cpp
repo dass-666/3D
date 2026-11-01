@@ -263,8 +263,20 @@ juce::String makeId()
     return juce::Uuid().toDashedString();
 }
 
+LiveSettings clamped (LiveSettings l)
+{
+    l.wetPercent = std::clamp (l.wetPercent, 0.0, 100.0);
+    l.cycleBeats = std::clamp (l.cycleBeats, 0.25, 16.0);
+    l.fx.id = kLivePointId;
+    l.fx.enabled = true;
+    l.fx.solo = false;
+    return l;
+}
+
 Point* findPoint (Scene& scene, const juce::String& id)
 {
+    if (id == kLivePointId)
+        return &scene.live.fx;
     auto it = std::find_if (scene.points.begin(), scene.points.end(), [&] (auto& p) { return p.id == id; });
     return it == scene.points.end() ? nullptr : &*it;
 }
@@ -330,6 +342,8 @@ bool removePoint (Scene& scene, const juce::String& id)
 
 std::optional<juce::String> duplicatePoint (Scene& scene, const juce::String& id)
 {
+    if (id == kLivePointId)
+        return std::nullopt;
     if ((int) scene.points.size() >= scene.maxPoints)
         return std::nullopt;
 

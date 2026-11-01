@@ -348,6 +348,26 @@ struct SourceRef
     bool operator== (const SourceRef&) const = default;
 };
 
+// Id of the live-processing pseudo-point (Scene::live.fx): it is not part of
+// `points`, but findPoint returns it so every editor view can edit it.
+inline constexpr const char* kLivePointId = "live";
+
+// «Procesar Mixer en vivo»: the audio arriving on the plugin's Mixer track is
+// processed continuously (filters, Volume Shaper as a cycle locked to the
+// host tempo, character/modulation/delay/reverb chain, pan/depth and gain),
+// mixed dry/wet. Pitch, formants and Stutter are NOT applied live (they need
+// the pre-rendered fragment); the repetitions keep working on top.
+struct LiveSettings
+{
+    LiveSettings() { fx.id = kLivePointId; }
+    bool enabled = false;
+    double wetPercent = 100.0;  // 0..100
+    double cycleBeats = 4.0;    // length of the Volume Shaper cycle, 0.25..16 quarter notes
+    Point fx;                   // shaper, effects, position and gainDb are used
+    bool operator== (const LiveSettings&) const = default;
+};
+LiveSettings clamped (LiveSettings);
+
 struct Scene
 {
     juce::String id;
@@ -359,6 +379,7 @@ struct Scene
     int maxPoints = kDefaultMaxPoints;
     SourceRef source;
     std::vector<Point> points;
+    LiveSettings live;
 
     bool operator== (const Scene&) const = default;
 };
@@ -381,9 +402,6 @@ struct VoicePreset;
 
 // ---- Editing operations ---------------------------------------------------
 
-// Id of the live-processing pseudo-point (Scene::live.fx): it is not part of
-// `points`, but findPoint returns it so every editor view can edit it.
-inline constexpr const char* kLivePointId = "live";
 Point* findPoint (Scene&, const juce::String& id);
 const Point* findPoint (const Scene&, const juce::String& id);
 

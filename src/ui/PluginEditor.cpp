@@ -20,6 +20,22 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     header.onModeChange = [this] (bool pro) { setProMode (pro); };
     header.onScaleChange = [this] (int pct) { setUiScale (pct); };
     actions.onImport = [this] (juce::Component& anchor) { showImportMenu (anchor); };
+    actions.onLiveToggle = [this]
+    {
+        const bool on = ! ctx.scene().live.enabled;
+        ctx.edit ([on] (Scene& s) { s.live.enabled = on; });
+        if (on)
+            ctx.select (kLivePointId, false);  // its settings appear in the panel
+        else if (ctx.primary() == kLivePointId)
+            ctx.clearSelection();
+        refreshLive();
+    };
+    actions.onLiveSettings = [this]
+    {
+        ctx.select (kLivePointId, false);
+        if (pro)
+            pointPanel.showSection ("filters");
+    };
     actions.onExport = [this] { exportPanel.setBounds (getLocalBounds()); exportPanel.open(); };
     addChildComponent (exportPanel);
     addChildComponent (curveEditor);
@@ -142,6 +158,7 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     setProMode (processor.getUiMode() == UiMode::Pro);
     refreshAudioInfo();
     refreshToolbar();
+    refreshLive();
     startTimerHz (30);
 }
 
@@ -244,10 +261,12 @@ void SpatialEchoEditor::refreshBottomBar()
     for (int i = 0; i < n; ++i)
         if (ctx.scene().points[(size_t) i].id == ctx.primary())
             idx = i + 1;
-    pointLabel.setText (pt != nullptr ? "Punto " + juce::String (idx) + " / " + juce::String (n) : juce::String (n) + " puntos",
+    const bool live = pt != nullptr && pt->id == kLivePointId;
+    pointLabel.setText (live ? u8 ("Mixer en vivo")
+                             : pt != nullptr ? "Punto " + juce::String (idx) + " / " + juce::String (n) : juce::String (n) + " puntos",
                         juce::dontSendNotification);
-    listenButton.setEnabled (pt != nullptr && processor.getSourceStatus().loaded);
-    soloButton.setEnabled (pt != nullptr);
+    listenButton.setEnabled (pt != nullptr && ! live && processor.getSourceStatus().loaded);
+    soloButton.setEnabled (pt != nullptr && ! live);
     soloButton.setToggleState (pt != nullptr && pt->solo, juce::dontSendNotification);
     abButton.setEnabled (pt != nullptr && curveEditor.hasStateB());
     prevPointButton.setEnabled (n > 1);
@@ -274,6 +293,7 @@ void SpatialEchoEditor::timerCallback()
             timeline.setProMode (processor.getUiMode() == UiMode::Pro);  // relayout blocks (pending markers)
         }
         refreshAudioInfo();
+        refreshLive();
         if (diagnosticsLabel.isVisible())
             refreshDiagnostics();
     }
@@ -288,6 +308,25 @@ void SpatialEchoEditor::showHostMenu()
     m.addSeparator();
     m.addItem (u8 ("Empezar a grabar (pulsa de nuevo para detener y usar)"), [this] { processor.startHostRecording(); refreshAudioInfo(); });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (hostButton));
+}
+
+void SpatialEchoEditor::refreshLive()
+{
+    const bool on = ctx.scene().live.enabled;
+    juce::String detail;
+    if (on)
+    {
+        const float inDb = processor.hostInputPeakDb();
+        detail << u8 ("Procesando la entrada de esta pista del Mixer (latencia 0). Entrada: ")
+               << (inDb <= -99.0f ? u8 ("sin se\xc3\xb1" "al") : juce::String (inDb, 0) + " dBFS")
+               << u8 (". Pulsa para detener.");
+    }
+    else
+    {
+        detail = u8 ("Aplica filtros, cortes y efectos de forma continua al audio que entra en esta pista del Mixer. "
+                     "Distinto de \xc2\xab" "Capturar \xc3\xbaltimos segundos\xc2\xbb, que convierte la entrada en fragmento.");
+    }
+    actions.setLiveState (on, detail);
 }
 
 void SpatialEchoEditor::showImportMenu (juce::Component& anchor)

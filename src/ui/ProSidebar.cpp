@@ -208,7 +208,8 @@ void ProSidebar::refresh()
     prevButton.setEnabled (has);
     nextButton.setEnabled (has);
 
-    presetTag = ! has ? juce::String() : count > 1 ? juce::String (count) + u8 (" repeticiones") : u8 ("Repetici\xc3\xb3n ") + juce::String (p->number);
+    presetTag = ! has ? juce::String() : p->id == kLivePointId ? u8 ("Mixer en vivo")
+              : count > 1 ? juce::String (count) + u8 (" repeticiones") : u8 ("Repetici\xc3\xb3n ") + juce::String (p->number);
     presetName = u8 ("Sin preset");
     presetDesc = has ? u8 ("Ajustes propios de la repetici\xc3\xb3n") : u8 ("Selecciona una repetici\xc3\xb3n");
     if (has && p->creativePreset.isNotEmpty())

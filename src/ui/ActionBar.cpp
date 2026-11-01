@@ -20,6 +20,10 @@ ActionBar::ActionBar (EditorContext& c) : ctx (c)
     liveButton.setTooltip (u8 ("Aplica filtros, cortes y efectos de forma continua al audio que entra en esta pista del Mixer. "
                                "Distinto de \xc2\xab" "Capturar \xc3\xbaltimos segundos\xc2\xbb, que convierte la entrada en fragmento."));
     liveButton.onClick = [this] { if (onLiveToggle) onLiveToggle(); };
+    liveSettingsButton.setButtonText (u8 ("Ajustes"));
+    liveSettingsButton.setTooltip (u8 ("Muestra los filtros, cortes y efectos del Mixer en vivo en el panel de la derecha"));
+    liveSettingsButton.onClick = [this] { if (onLiveSettings) onLiveSettings(); };
+    addChildComponent (liveSettingsButton);
 
     exportButton.setButtonText (u8 ("\xe2\x87\xaa  Exportar a Playlist"));
     exportButton.setColour (juce::TextButton::buttonColourId, theme::blue.withAlpha (0.85f));
@@ -77,6 +81,11 @@ void ActionBar::setLiveState (bool on, const juce::String& detail)
     liveButton.setColour (juce::TextButton::buttonColourId, on ? theme::success.withAlpha (0.55f) : theme::panel.brighter (0.15f));
     liveButton.setButtonText (on ? u8 ("\xe2\x97\x8f  Mixer en vivo: ACTIVO") : u8 ("\xe2\x97\x8b  Procesar Mixer en vivo"));
     liveButton.setTooltip (detail);
+    if (liveSettingsButton.isVisible() != on)
+    {
+        liveSettingsButton.setVisible (on);
+        resized();
+    }
 }
 
 void ActionBar::paint (juce::Graphics& g)
@@ -96,6 +105,8 @@ void ActionBar::resized()
     auto put = [&] (juce::Button& b, int w) { b.setBounds (r.removeFromLeft (w)); r.removeFromLeft (8); };
     put (importButton, compact ? 150 : 170);
     put (liveButton, compact ? 190 : 210);
+    if (liveSettingsButton.isVisible())
+        put (liveSettingsButton, 74);
     put (exportButton, compact ? 160 : 180);
     r.removeFromLeft (12);
     put (presetsButton, compact ? 128 : 140);

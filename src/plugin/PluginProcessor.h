@@ -2,6 +2,7 @@
 
 #include "audio/EchoEngine.h"
 #include "audio/HostCapture.h"
+#include "audio/LiveChain.h"
 #include "audio/OfflineRender.h"
 #include "audio/PitchRenderer.h"
 #include "audio/PlanExchange.h"
@@ -129,6 +130,9 @@ public:
     int getUiScalePercent() const noexcept { return uiScalePercent.load(); }
     void setUiScalePercent (int p) noexcept { uiScalePercent.store (juce::jlimit (100, 150, p)); }
 
+    // True while «Procesar Mixer en vivo» is processing the input (or fading out). UI.
+    bool isLiveProcessing() const noexcept { return liveProcessing.load (std::memory_order_relaxed); }
+
     // ---- «Exportar audio»: renders the repetitions to a WAV file on a
     // background thread (same engine and settings as what is heard). Message thread.
     struct ExportRequest
@@ -169,6 +173,8 @@ private:
     juce::Result useCapturedAudio (const std::optional<DecodedAudio>&);
 
     EchoEngine engine;
+    LiveChain liveChain;
+    std::atomic<bool> liveProcessing { false };
     HostCapture capture;
     SafetyLimiter limiter;
     PlanExchange<PlaybackPlan> plans;

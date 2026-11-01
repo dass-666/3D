@@ -118,6 +118,12 @@ private:
     juce::TextButton triggerButton { "Disparar esta" };
     juce::ToggleButton enabledToggle { "Activa" }, soloToggle { "Solo" };
     juce::TextButton duplicateButton { "Duplicar" }, deleteButton { "Eliminar" };
+    // «Procesar Mixer en vivo» (shown when the live pseudo-point is selected)
+    bool editingLive() const;
+    juce::ToggleButton liveToggle { "Procesar" };
+    juce::Slider liveWet;
+    juce::ComboBox liveCycleBox;
+    juce::Label liveWetL, liveCycleL, liveNote;
 
     // Stutter
     SectionHeader soundTitle, timeTitle, spaceTitle, stutterTitle;

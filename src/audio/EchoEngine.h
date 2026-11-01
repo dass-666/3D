@@ -88,6 +88,21 @@ std::vector<CurvePoint> bakeCurve (const ShaperSettings& s, double spanSeconds, 
 // autoLevel, the RMS the closed parts remove (capped at +6 dB; +12 dB in total).
 float shaperLevelGain (const ShaperSettings&, double voiceSeconds, double divisionSeconds);
 
+// «Procesar Mixer en vivo» settings for the audio thread (see LiveChain),
+// prepared on the message thread with makeLivePlan.
+struct LivePlan
+{
+    bool enabled = false;
+    float wet = 1.0f;
+    double cycleBeats = 4.0;
+    ShaperSettings shaper;      // read only on the audio thread
+    float shaperLevel = 1.0f;
+    PointEffects effects;       // read only; the POD order below is used
+    char order[4] { 'c', 'm', 'd', 'r' };
+    Placement placement;
+    float highpassCoef = 0.0f;
+};
+
 // Everything the audio thread needs, rendered at the host sample rate.
 // Immutable once published.
 struct PlaybackPlan
@@ -100,6 +115,7 @@ struct PlaybackPlan
     int pendingPitchRenders = 0;
     std::array<FxAssignment, limits::maxFxPoints> fx {};
     int pointsWithoutFx = 0;  // points whose chain did not fit (beyond maxFxPoints): they play dry
+    LivePlan live;            // processing of the input (off unless the scene enables it)
 
     const PlannedEcho* find (juce::uint64 key, int index) const noexcept;
     const PlannedEcho* find (juce::uint64 key) const noexcept { return find (key, 0); }

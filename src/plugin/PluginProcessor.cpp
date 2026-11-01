@@ -178,6 +178,7 @@ void SpatialEchoProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     hostSampleRate.store (sampleRate);
     diagnostics.log ("prepareToPlay sr=" + juce::String (sampleRate) + " block=" + juce::String (samplesPerBlock));
     engine.prepare (sampleRate);
+    liveChain.prepare (sampleRate, juce::jmax (samplesPerBlock * 2, 4096));
     capture.prepare (sampleRate, juce::jmax (1, getTotalNumInputChannels()));
     limiter.prepare (sampleRate);
     lastTrigger = triggerValue->load() > 0.5f;
@@ -235,6 +236,14 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     const bool preview = previewRequested.exchange (false);
     const bool fragment = fragmentRequested.exchange (false);
 
+    const auto* plan = plans.acquire();
+
+    // «Procesar Mixer en vivo»: the input itself, before the repetitions are added
+    // (the capture above keeps the raw input, so processed audio never feeds back into a capture).
+    liveChain.process (buffer, n, plan != nullptr ? &plan->live : nullptr, transport,
+                       transport.bpm.value_or (engine.lastBpmUsed()));
+    liveProcessing.store (liveChain.isProcessing(), std::memory_order_relaxed);
+
     wetLevel.setTargetValue (mixPercent->load() / 100.0f);
     const float wetStart = wetLevel.getCurrentValue();
     wetLevel.skip (n);
@@ -246,7 +255,6 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     req.previewFragment = fragment;
     req.triggerPoint = pointTrigger.exchange (0);
 
-    const auto* plan = plans.acquire();
     engine.process (buffer, plan, transport, req, wetStart, wetEnd);
     plans.release();
     currentBeat.store (engine.currentBeat());
@@ -267,7 +275,7 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
-    if (protectValue->load() > 0.5f && (engine.numActiveVoices() > 0 || limiter.isReducing()))
+    if (protectValue->load() > 0.5f && (engine.numActiveVoices() > 0 || liveChain.isProcessing() || limiter.isReducing()))
         limiter.process (buffer);
     else
         limiter.idle();
@@ -406,6 +414,7 @@ void SpatialEchoProcessor::rebuildPlan()
     pitchRenderer.request (keys);
 
     auto plan = buildPlan (scene, renderedSample, pitchRenderer.ready(), rate, lastPlanForSlots.get());
+    plan->live = makeLivePlan (scene.live, rate);
     lastPlanForSlots = std::make_shared<PlaybackPlan>();
     lastPlanForSlots->fx = plan->fx;
 

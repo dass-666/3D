@@ -50,7 +50,8 @@ public:
 
 private:
     void timerCallback() override;
-    void sceneChanged() override { refreshAudioInfo(); refreshBottomBar(); }
+    void sceneChanged() override { refreshAudioInfo(); refreshBottomBar(); refreshLive(); }
+    void refreshLive();
     void selectionChanged() override { refreshToolbar(); refreshBottomBar(); }
     void setProMode (bool);
     void chooseWav();

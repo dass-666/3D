@@ -18,12 +18,12 @@ public:
     void resized() override;
 
     std::function<void (juce::Component& anchor)> onImport;
-    std::function<void()> onLiveToggle, onExport;
+    std::function<void()> onLiveToggle, onLiveSettings, onExport;
     void showNote (const juce::String&, bool warning = false);  // short status text on the right
     void tick();                                                 // editor timer: fades the note
     void setLiveState (bool on, const juce::String& detail);     // look of the live button
 
-    juce::TextButton importButton, liveButton, exportButton, presetsButton, savePresetButton;  // public for tests
+    juce::TextButton importButton, liveButton, liveSettingsButton, exportButton, presetsButton, savePresetButton;  // public for tests
 
 private:
     EditorContext& ctx;
