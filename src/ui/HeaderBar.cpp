@@ -49,6 +49,12 @@ HeaderBar::HeaderBar (EditorContext& c) : ctx (c)
                          });
     };
     addAndMakeVisible (sceneMenu);
+    undoButton.setTooltip (u8 ("Deshacer (Ctrl+Z)"));
+    redoButton.setTooltip (u8 ("Rehacer (Ctrl+Y)"));
+    undoButton.onClick = [this] { ctx.undo(); };
+    redoButton.onClick = [this] { ctx.redo(); };
+    addAndMakeVisible (undoButton);
+    addAndMakeVisible (redoButton);
 
     triggerButton.setColour (juce::TextButton::buttonColourId, theme::blue);
     triggerButton.setTooltip (u8 ("Dispara las repeticiones. Con FL Studio en reproducci\xc3\xb3n, entran en el siguiente paso de la rejilla."));
@@ -99,6 +105,13 @@ void HeaderBar::sceneChanged()
 {
     if (! sceneName.isBeingEdited())
         sceneName.setText (ctx.scene().name, juce::dontSendNotification);
+    refreshHistory();
+}
+
+void HeaderBar::refreshHistory()
+{
+    undoButton.setEnabled (ctx.canUndo());
+    redoButton.setEnabled (ctx.canRedo());
 }
 
 void HeaderBar::setProMode (bool pro)
@@ -203,7 +216,11 @@ void HeaderBar::resized()
     sceneName.setBounds (r.removeFromLeft (130).withSizeKeepingCentre (130, 28));
     r.removeFromLeft (4);
     sceneMenu.setBounds (r.removeFromLeft (92).withSizeKeepingCentre (92, 30));
-    r.removeFromLeft (12);
+    r.removeFromLeft (8);
+    undoButton.setBounds (r.removeFromLeft (34).withSizeKeepingCentre (34, 30));
+    r.removeFromLeft (3);
+    redoButton.setBounds (r.removeFromLeft (34).withSizeKeepingCentre (34, 30));
+    r.removeFromLeft (10);
 
     // Right side, from the right edge.
     auto toggles = r.removeFromRight (96);

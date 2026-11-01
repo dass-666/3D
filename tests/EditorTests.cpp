@@ -436,3 +436,61 @@ TEST_CASE ("Pro layout: quick controls edit the generator, generate perfect cuts
     CHECK (p.getSceneForUi() == before);
     snapshot (ed, "ui-pro-cuts.png");
 }
+
+TEST_CASE ("Document undo/redo: steps, coalesced drags, redo cleared by a new edit, external changes clear history, source kept")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    EditorContext ctx (p);
+    CHECK (! ctx.canUndo());
+    const auto s0 = ctx.scene();
+    const auto id = s0.points[0].id;
+
+    ctx.edit ([&] (Scene& s) { setGainDb (s, id, -6.0); });
+    CHECK (ctx.canUndo());
+    ctx.breakUndoGroup();
+    ctx.edit ([&] (Scene& s) { movePoint (s, id, { 10.0, 10.0 }); });
+    CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-6.0, 1e-9));
+    ctx.undo();
+    CHECK (ctx.scene().points[0].position == s0.points[0].position);
+    CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-6.0, 1e-9));
+    CHECK (ctx.canRedo());
+    ctx.undo();
+    CHECK (ctx.scene() == s0);
+    CHECK (! ctx.canUndo());
+    ctx.redo();
+    CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-6.0, 1e-9));
+    ctx.redo();
+    CHECK (ctx.scene().points[0].position == Position { 10.0, 10.0 });
+    CHECK (! ctx.canRedo());
+
+    // A drag (many edits within the coalescing window) is one step.
+    ctx.breakUndoGroup();
+    for (int i = 1; i <= 20; ++i)
+        ctx.edit ([&, i] (Scene& s) { setGainDb (s, id, -6.0 - i * 0.5); });
+    CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-16.0, 1e-9));
+    ctx.undo();
+    CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-6.0, 1e-9));
+
+    // A new edit after undo discards the redo branch.
+    ctx.breakUndoGroup();
+    ctx.edit ([&] (Scene& s) { addPoint (s, { 50.0, 20.0 }); });
+    CHECK (! ctx.canRedo());
+
+    // The host restoring state (or a WAV load) is not undoable and clears the history.
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    p.setStateInformation (state.getData(), (int) state.getSize());
+    ctx.refreshIfChanged();
+    CHECK (! ctx.canUndo());
+
+    // Undo never touches the source audio reference.
+    ctx.breakUndoGroup();
+    ctx.edit ([&] (Scene& s) { setGainDb (s, id, 3.0); });
+    const auto src = ctx.scene().source;
+    ctx.undo();
+    CHECK (ctx.scene().source == src);
+    CHECK (p.getSourceStatus().loaded);
+}

@@ -27,6 +27,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
 
     EditorContext& getContext() noexcept { return ctx; }
     SpatialMap& getMap() noexcept { return map; }

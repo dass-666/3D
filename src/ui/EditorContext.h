@@ -32,6 +32,13 @@ public:
     {
         if (processor.getDocumentVersion() != cachedVersion)
         {
+            if (! expectingChange)
+            {
+                // Changed behind our back (host state restore, scene/WAV load): history no longer applies.
+                undoStack.clear();
+                redoStack.clear();
+            }
+            expectingChange = false;
             pull();
             listeners.call ([] (Listener& l) { l.sceneChanged(); });
         }
@@ -39,9 +46,38 @@ public:
 
     void edit (const std::function<void (Scene&)>& fn)
     {
+        pushUndo();
+        expectingChange = true;
         processor.editScene (fn);
         refreshIfChanged();
     }
+
+    // ---- document undo / redo (message thread). Every edit() is a step; edits
+    // closer than kCoalesceMs (slider drags) merge into one. The source audio
+    // is never part of a step: undo restores points and settings only.
+    static constexpr int kCoalesceMs = 500;
+    static constexpr size_t kMaxHistory = 200;
+    bool canUndo() const noexcept { return ! undoStack.empty(); }
+    bool canRedo() const noexcept { return ! redoStack.empty(); }
+    void undo()
+    {
+        if (undoStack.empty())
+            return;
+        redoStack.push_back (cached);
+        auto snap = std::move (undoStack.back());
+        undoStack.pop_back();
+        applySnapshot (snap);
+    }
+    void redo()
+    {
+        if (redoStack.empty())
+            return;
+        undoStack.push_back (cached);
+        auto snap = std::move (redoStack.back());
+        redoStack.pop_back();
+        applySnapshot (snap);
+    }
+    void breakUndoGroup() noexcept { lastEditMs = 0; }  // the next edit starts a new step
 
     // ---- selection --------------------------------------------------------
     const juce::StringArray& selection() const noexcept { return selected; }
@@ -91,6 +127,34 @@ public:
     void removeListener (Listener* l) { listeners.remove (l); }
 
 private:
+    void pushUndo()
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (! undoStack.empty() && now - lastEditMs < (juce::uint32) kCoalesceMs)
+        {
+            lastEditMs = now;
+            return;  // part of the same step
+        }
+        lastEditMs = now;
+        undoStack.push_back (cached);
+        if (undoStack.size() > kMaxHistory)
+            undoStack.erase (undoStack.begin());
+        redoStack.clear();
+    }
+
+    void applySnapshot (const Scene& snap)
+    {
+        expectingChange = true;
+        processor.editScene ([snap] (Scene& s)
+        {
+            auto src = s.source;
+            s = snap;
+            s.source = src;
+        });
+        lastEditMs = 0;
+        refreshIfChanged();
+    }
+
     void pull()
     {
         cachedVersion = processor.getDocumentVersion();
@@ -114,6 +178,9 @@ private:
 
     Scene cached;
     juce::uint32 cachedVersion = 0;
+    std::vector<Scene> undoStack, redoStack;
+    juce::uint32 lastEditMs = 0;
+    bool expectingChange = false;
     juce::StringArray selected;
     juce::ListenerList<Listener> listeners;
 };

@@ -186,6 +186,23 @@ void SpatialEchoEditor::setProMode (bool shouldBePro)
     setCenterView (centerView);  // also shows/hides the embedded curve editor and lays out
 }
 
+bool SpatialEchoEditor::keyPressed (const juce::KeyPress& k)
+{
+    // Document undo/redo (the curve editor handles its own keys while it has focus).
+    if (k == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0))
+    {
+        ctx.undo();
+        return true;
+    }
+    if (k == juce::KeyPress ('y', juce::ModifierKeys::commandModifier, 0)
+        || k == juce::KeyPress ('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        ctx.redo();
+        return true;
+    }
+    return false;
+}
+
 void SpatialEchoEditor::stepPoint (int delta)
 {
     const auto& pts = ctx.scene().points;

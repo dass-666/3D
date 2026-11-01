@@ -20,6 +20,8 @@ public:
 
 private:
     void sceneChanged() override;
+    void selectionChanged() override { refreshHistory(); }
+    void refreshHistory();
     void chooseSave();
     void chooseLoad();
 
@@ -28,6 +30,7 @@ private:
     juce::Label sceneName;
     juce::TextButton sceneMenu { juce::String::fromUTF8 ("Escena \xe2\x96\xbe") };
     juce::TextButton triggerButton { "Disparar" }, previewButton { "Probar" };
+    juce::TextButton undoButton { juce::String::fromUTF8 ("\xe2\x86\xb6") }, redoButton { juce::String::fromUTF8 ("\xe2\x86\xb7") };
     juce::Slider mix, output;
     juce::Label mixLabel, outputLabel;
     juce::ToggleButton bypass { "Bypass" }, protect { juce::String::fromUTF8 ("Protecci\xc3\xb3n") };
