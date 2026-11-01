@@ -1,4 +1,4 @@
-# Prueba manual en FL Studio (B2 corregido + B3 + interfaz + B4 efectos)
+# Prueba manual en FL Studio (B2–B4 + tiempo libre, Volume Shaper, entrada del host)
 
 Las pruebas automáticas simulan un host; **no sustituyen esta prueba**. Anota
 OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`.
@@ -73,6 +73,53 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
    todos reciben la misma configuración.
 5. Lo que **no** existe todavía y la interfaz marca como «próximamente»:
    aceleración progresiva, «carácter» (Robot/Fantasma) y «velocidad».
+
+## 8. Tiempo libre (ms)
+1. En la línea temporal cambia «Sincronizado al BPM» por «Tiempo libre (ms)»:
+   los momentos se convierten al tempo actual (nada se mueve). El eje pasa a
+   segundos y «Momento (libre)» del panel se mide en ms.
+2. Pon la repetición 2 en 500 ms. Dispara a 90 BPM y luego a 150 BPM: debe
+   sonar siempre 0,5 s después del disparo (en modo BPM se movería).
+3. Cambia el BPM del proyecto **mientras** una repetición está pendiente: su
+   momento en ms no cambia.
+4. «Ajustar a la rejilla» (opcional) en modo libre: el arrastre salta a la
+   división rítmica al tempo actual.
+5. Guarda y reabre: el modo y los ms se conservan.
+
+## 9. Volume Shaper / cortes
+1. Repetición 4, sección «Volume Shaper / cortes»: Activar, preset «Gate»
+   (8 cortes cuadrados, 100 %). La línea temporal dibuja la curva sobre el
+   bloque. Dispara: 8 cortes **uniformes**, sin clics (fundido 3 ms).
+2. «Nº de cortes» 16, profundidad 60 %, apertura 30 %: los cortes se acortan y
+   la parte cerrada no llega al silencio.
+3. Ritmo «Milisegundos» 100 ms: 10 cortes por segundo, independiente del BPM.
+   Ritmo «División del BPM» 1/16: sigue al tempo del proyecto.
+4. Presets «Tremolo» (triangular), «Cortes acelerados» (Pro: aceleración) y
+   «Fade final» (solo la segunda mitad).
+5. En Pro: «Toda la repetición» desactivado + «Inicio/Fin zona» aplica la curva
+   solo a esa parte. Con Stutter activo, la curva se aplica a cada trozo.
+6. Lo que no existe: edición manual de puntos de la curva (la interfaz lo dice).
+
+## 10. Entrada del host (Mixer)
+1. Con audio sonando en la pista del Mixer donde está el plugin, el botón
+   «Entrada del host» muestra el nivel de entrada en dB (sin audio: «--»).
+2. Menú «Últimos 2 s»: el fragmento pasa a ser lo que acaba de sonar
+   («Entrada del host (captura)» en la línea de audio, guardado en el proyecto).
+   Las repeticiones usan ese fragmento igual que un WAV.
+3. «Empezar a grabar», canta 3 s, pulsa de nuevo: el fragmento es la grabación.
+4. Con la pista en silencio, «Últimos 2 s» debe rechazarse con un aviso, no
+   cargar silencio.
+5. Guarda, cierra y reabre: la captura vuelve (va embebida como WAV).
+6. Detener y reiniciar el transporte no afecta a la captura (sigue
+   registrando). El plugin no añade latencia.
+
+## 11. Efectos por repetición
+1. Fade in 300 ms / Fade out 300 ms: entrada y salida suaves.
+2. Reverse: la repetición suena al revés (solo esa).
+3. Paso bajo 800 Hz: más oscura. Paso alto 1500 Hz: más fina. Doble clic en el
+   control lo apaga.
+4. Delay, reverb, modulación, formantes y capas vocales: **no implementados**
+   (la interfaz lo indica; no hay controles).
 
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la
