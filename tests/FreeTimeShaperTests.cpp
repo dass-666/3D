@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include <cmath>
 
@@ -348,4 +349,124 @@ TEST_CASE ("Time mode switch converts moments at the given tempo; persistence an
     CHECK (q.timing.seconds == 1.0);  // 2 beats at 120
     CHECK (q.region == PlayRegion {});
     CHECK_FALSE (q.shaper.enabled);
+}
+
+// ---- Host input capture ----------------------------------------------------
+
+#include "audio/HostCapture.h"
+#include "plugin/PluginProcessor.h"
+
+TEST_CASE ("HostCapture: last seconds, recording, overwrite protection")
+{
+    const double sr = 48000.0;
+    HostCapture cap;
+    cap.prepare (sr, 2);
+    CHECK_FALSE (cap.takeLast (1.0).has_value());  // nothing yet
+
+    // Push 3 s of a ramp so sample values identify their position.
+    juce::AudioBuffer<float> in (2, 480);
+    juce::int64 total = 0;
+    auto pushSeconds = [&] (double seconds)
+    {
+        for (int b = 0; b < (int) (seconds * sr / 480); ++b)
+        {
+            for (int i = 0; i < 480; ++i)
+            {
+                in.setSample (0, i, (float) ((total + i) % 1000) / 1000.0f);
+                in.setSample (1, i, -in.getSample (0, i));
+            }
+            cap.push (in, 480);
+            total += 480;
+        }
+    };
+    pushSeconds (3.0);
+    auto last = cap.takeLast (1.0);
+    REQUIRE (last.has_value());
+    CHECK (last->buffer.getNumSamples() == 48000);
+    CHECK (last->buffer.getNumChannels() == 2);
+    CHECK (last->sampleRate == sr);
+    // The last sample of the capture is the last sample pushed.
+    CHECK (last->buffer.getSample (0, 47999) == Catch::Approx ((float) ((total - 1) % 1000) / 1000.0f));
+    CHECK (last->buffer.getSample (1, 0) == Catch::Approx (-last->buffer.getSample (0, 0)));
+
+    // Recording: start, push 0.5 s, stop -> 0.5 s.
+    cap.startRecording();
+    CHECK (cap.isRecording());
+    pushSeconds (0.5);
+    CHECK (cap.recordedSeconds() == Catch::Approx (0.5).margin (0.02));
+    auto rec = cap.stopRecording();
+    REQUIRE (rec.has_value());
+    CHECK (rec->buffer.getNumSamples() == Catch::Approx (24000).margin (480));
+    CHECK_FALSE (cap.isRecording());
+
+    // Wrap-around: after 25 s the ring has wrapped; the last 2 s are still contiguous and correct.
+    pushSeconds (25.0);
+    auto wrapped = cap.takeLast (2.0);
+    REQUIRE (wrapped.has_value());
+    CHECK (wrapped->buffer.getNumSamples() == 96000);
+    for (int i = 0; i < 96000; i += 997)
+        CHECK (wrapped->buffer.getSample (0, i) == Catch::Approx ((float) ((total - 96000 + i) % 1000) / 1000.0f));
+    // A request longer than the safe window is refused rather than returning torn audio.
+    CHECK (cap.takeLast (HostCapture::kMaxCaptureSeconds).has_value());
+    CHECK (cap.peakDb() > -1.0f);
+}
+
+TEST_CASE ("Processor: host input capture becomes the fragment, is embedded and survives save/restore")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const double sr = 44100.0;
+    SpatialEchoProcessor p;
+    p.setPlayConfigDetails (2, 2, sr, 512);
+    p.prepareToPlay (sr, 512);
+    p.setDocument (Document {});  // empty document, no audio
+
+    // Silence first: capture must refuse (routing mistake), not load a silent fragment.
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 100; ++b)
+    {
+        buf.clear();
+        p.processBlock (buf, midi);
+    }
+    CHECK (p.captureHostLast (0.5).failed());
+    CHECK_FALSE (p.getSourceStatus().loaded);
+
+    // 1 s of a 330 Hz tone arriving from the host.
+    juce::int64 t = 0;
+    for (int b = 0; b < (int) (sr / 512) + 1; ++b)
+    {
+        for (int i = 0; i < 512; ++i, ++t)
+        {
+            const float v = 0.4f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 330.0 * t / sr);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        p.processBlock (buf, midi);
+    }
+    REQUIRE (p.captureHostLast (0.5).wasOk());
+    const auto st = p.getSourceStatus();
+    CHECK (st.loaded);
+    CHECK (st.embedded);
+    CHECK (st.seconds == Catch::Approx (0.5).margin (0.001));
+    CHECK (st.fileName.containsIgnoreCase ("host"));
+    auto audio = p.getSourceAudio();
+    REQUIRE (audio != nullptr);
+    CHECK (audio->buffer.getNumChannels() == 2);
+    float mag = audio->buffer.getMagnitude (0, 0, audio->buffer.getNumSamples());
+    CHECK (mag == Catch::Approx (0.4f).margin (0.01f));
+
+    // Save/restore in a fresh processor: the capture is part of the state.
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    SpatialEchoProcessor q;
+    q.setPlayConfigDetails (2, 2, sr, 512);
+    q.prepareToPlay (sr, 512);
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    const auto st2 = q.getSourceStatus();
+    CHECK (st2.loaded);
+    CHECK (st2.seconds == Catch::Approx (0.5).margin (0.001));
+    auto audio2 = q.getSourceAudio();
+    REQUIRE (audio2 != nullptr);
+    CHECK (audio2->buffer.getNumSamples() == audio->buffer.getNumSamples());
+    CHECK (audio2->buffer.getSample (0, 1000) == Catch::Approx (audio->buffer.getSample (0, 1000)).margin (1e-4));
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/EchoEngine.h"
+#include "audio/HostCapture.h"
 #include "audio/PitchRenderer.h"
 #include "audio/PlanExchange.h"
 #include "audio/SafetyLimiter.h"
@@ -104,6 +105,17 @@ public:
 
     void refreshPlan() { rebuildPlan(); }  // message thread
 
+    // ---- Host input ("Entrada del host"): the audio arriving from the Mixer
+    // track is kept for the last seconds; a capture becomes the fragment
+    // (embedded as WAV, so it is saved with the project). Message thread.
+    juce::Result captureHostLast (double seconds);
+    void startHostRecording() { capture.startRecording(); }
+    juce::Result stopHostRecording();   // and use it as the fragment
+    bool isHostRecording() const noexcept { return capture.isRecording(); }
+    double hostRecordedSeconds() const noexcept { return capture.recordedSeconds(); }
+    float hostInputPeakDb() const noexcept { return capture.peakDb(); }
+    static constexpr const char* kHostCaptureName = "Entrada del host (captura)";
+
     // Pitch pre-rendering status (message thread).
     int numPendingPitchRenders() const { return pitchRenderer.numPending(); }
     bool isPitchPending (const Point& p) const { return pitchRenderer.isPending (centsFor (p.sound.pitchSemitones)); }
@@ -116,7 +128,10 @@ private:
     void restoreSourceFromDocument();     // reads/clears embedded bytes of the active scene
     void takeEmbeddedBytes();             // moves embedded bytes out of `document`
 
+    juce::Result useCapturedAudio (const std::optional<DecodedAudio>&);
+
     EchoEngine engine;
+    HostCapture capture;
     SafetyLimiter limiter;
     PlanExchange<PlaybackPlan> plans;
     std::atomic<double> hostSampleRate { 44100.0 };

@@ -29,6 +29,9 @@ DecodeResult decodeWav (const juce::MemoryBlock& fileBytes);
 
 juce::String sha256Hex (const juce::MemoryBlock&);
 
+// 24-bit PCM WAV bytes (for embedding captured audio in the project).
+juce::MemoryBlock encodeWav (const juce::AudioBuffer<float>&, double sampleRate);
+
 // Band-limited resampling is not needed for B2's purpose (same-content
 // playback); Lagrange interpolation is used. Returns a copy when rates match.
 juce::AudioBuffer<float> resampled (const DecodedAudio&, double targetSampleRate);

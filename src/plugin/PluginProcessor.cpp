@@ -66,6 +66,7 @@ void SpatialEchoProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     hostSampleRate.store (sampleRate);
     diagnostics.log ("prepareToPlay sr=" + juce::String (sampleRate) + " block=" + juce::String (samplesPerBlock));
     engine.prepare (sampleRate);
+    capture.prepare (sampleRate, juce::jmax (1, getTotalNumInputChannels()));
     limiter.prepare (sampleRate);
     lastTrigger = triggerValue->load() > 0.5f;
 
@@ -88,6 +89,9 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     for (auto ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, n);
+
+    // Host input: keep the dry signal for later capture (always on; one block copy).
+    capture.push (buffer, n);
 
     TransportInfo transport;
     if (auto* head = getPlayHead())
@@ -364,6 +368,33 @@ juce::Result SpatialEchoProcessor::loadSourceBytes (const juce::MemoryBlock& byt
     diagnostics.log ("WAV loaded " + fileNameOf (originalPath) + " bytes=" + juce::String ((juce::int64) bytes.getSize())
                      + (embed ? " (embedded)" : " (reference only: larger than 16 MB)"));
     return juce::Result::ok();
+}
+
+juce::Result SpatialEchoProcessor::captureHostLast (double seconds)
+{
+    return useCapturedAudio (capture.takeLast (seconds));
+}
+
+juce::Result SpatialEchoProcessor::stopHostRecording()
+{
+    return useCapturedAudio (capture.stopRecording());
+}
+
+juce::Result SpatialEchoProcessor::useCapturedAudio (const std::optional<DecodedAudio>& audio)
+{
+    if (! audio || audio->buffer.getNumSamples() == 0)
+        return juce::Result::fail (juce::String::fromUTF8 ("No hay audio de entrada capturado todav\xc3\xad" "a"));
+    // Silence check: a capture of nothing is almost always a routing mistake.
+    float mag = 0.0f;
+    for (int ch = 0; ch < audio->buffer.getNumChannels(); ++ch)
+        mag = juce::jmax (mag, audio->buffer.getMagnitude (ch, 0, audio->buffer.getNumSamples()));
+    if (mag < 1.0e-5f)
+        return juce::Result::fail (juce::String::fromUTF8 ("La entrada capturada est\xc3\xa1 en silencio: comprueba que el audio llega a esta pista del Mixer"));
+    const auto bytes = encodeWav (audio->buffer, audio->sampleRate);
+    if (bytes.getSize() == 0)
+        return juce::Result::fail ("No se pudo codificar la captura");
+    diagnostics.log ("host capture " + juce::String (audio->buffer.getNumSamples() / audio->sampleRate, 2) + " s");
+    return loadSourceBytes (bytes, kHostCaptureName);
 }
 
 void SpatialEchoProcessor::restoreSourceFromDocument()

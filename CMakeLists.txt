@@ -42,6 +42,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/DemoScene.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/SourceAudio.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/PitchRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/HostCapture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Theme.cpp

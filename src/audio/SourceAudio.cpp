@@ -5,6 +5,20 @@
 namespace ses
 {
 
+juce::MemoryBlock encodeWav (const juce::AudioBuffer<float>& audio, double sampleRate)
+{
+    juce::MemoryBlock block;
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::MemoryOutputStream> (block, false);
+    auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (sampleRate)
+                                                   .withNumChannels (audio.getNumChannels()).withBitsPerSample (24));
+    if (writer == nullptr)
+        return {};
+    writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+    writer.reset();  // flushes the header
+    return block;
+}
+
 DecodeResult decodeWav (const juce::MemoryBlock& fileBytes)
 {
     DecodeResult r;

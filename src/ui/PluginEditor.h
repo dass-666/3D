@@ -52,7 +52,12 @@ private:
     PointPanel pointPanel;
     TimelineView timeline;
 
-    juce::TextButton loadButton { "Cargar WAV" }, fragmentButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Fragmento") };
+    juce::TextButton loadButton { "Cargar WAV" }, fragmentButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Fragmento") },
+        hostButton { juce::String::fromUTF8 ("Entrada del host \xe2\x96\xbe") };
+    juce::String captureNote;   // last capture result, shown briefly
+    int captureNoteTicks = 0;
+    void showHostMenu();
+    void hostCapture (const juce::Result&);
     juce::Label audioInfo, fragmentInfo;
     juce::TextButton addButton { juce::String::fromUTF8 ("+ A\xc3\xb1" "adir") }, duplicateButton { "Duplicar" },
         muteButton { "Silenciar" }, deleteButton { "Eliminar" };

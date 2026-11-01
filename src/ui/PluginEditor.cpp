@@ -33,6 +33,15 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     fragmentInfo.setJustificationType (juce::Justification::centredRight);
     countLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (loadButton);
+    hostButton.setTooltip (u8 ("Usa como fragmento el audio que llega a esta pista del Mixer: los \xc3\xbaltimos segundos o una grabaci\xc3\xb3n"));
+    hostButton.onClick = [this]
+    {
+        if (processor.isHostRecording())
+            hostCapture (processor.stopHostRecording());
+        else
+            showHostMenu();
+    };
+    addAndMakeVisible (hostButton);
     addAndMakeVisible (fragmentButton);
 
     addButton.onClick = [this]
@@ -115,28 +124,61 @@ void SpatialEchoEditor::timerCallback()
     }
 }
 
+void SpatialEchoEditor::showHostMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (u8 ("Capturar la entrada del Mixer"));
+    for (double secs : { 1.0, 2.0, 4.0, 8.0 })
+        m.addItem (u8 ("\xc3\x9altimos ") + juce::String (secs, 0) + " s", [this, secs] { hostCapture (processor.captureHostLast (secs)); });
+    m.addSeparator();
+    m.addItem (u8 ("Empezar a grabar (pulsa de nuevo para detener y usar)"), [this] { processor.startHostRecording(); refreshAudioInfo(); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (hostButton));
+}
+
+void SpatialEchoEditor::hostCapture (const juce::Result& r)
+{
+    captureNote = r.wasOk() ? u8 ("Captura usada como fragmento") : r.getErrorMessage();
+    captureNoteTicks = 60;  // ~ 12 s at the info refresh rate
+    refreshAudioInfo();
+}
+
 void SpatialEchoEditor::refreshAudioInfo()
 {
+    if (processor.isHostRecording())
+    {
+        hostButton.setButtonText (u8 ("\xe2\x97\x8f Grabando ") + juce::String (processor.hostRecordedSeconds(), 1) + " s  (detener)");
+        hostButton.setColour (juce::TextButton::buttonColourId, theme::danger.withAlpha (0.6f));
+    }
+    else
+    {
+        hostButton.setButtonText (u8 ("Entrada del host \xe2\x96\xbe"));
+        hostButton.removeColour (juce::TextButton::buttonColourId);
+    }
+
     const auto st = processor.getSourceStatus();
     juce::String info;
     if (st.loaded)
         info << st.fileName << "   " << juce::String (st.seconds, 2) << " s" << dot << juce::String (st.sampleRate / 1000.0, 1)
              << " kHz" << dot << (st.numChannels == 1 ? juce::String ("mono") : u8 ("est\xc3\xa9reo"))
-             << dot << (st.embedded ? u8 ("guardado en el proyecto") : u8 ("referencia al archivo"));
+             << dot << (st.embedded ? u8 ("en el proyecto") : u8 ("referencia"));
     else
         info = "Sin audio cargado";
     if (st.message.isNotEmpty())
         info << "   (" << st.message << ")";
     if (const int pend = processor.numPendingPitchRenders(); pend > 0)
         info << u8 ("   \xc2\xb7  procesando tono (") << pend << ")";
+    const float inDb = processor.hostInputPeakDb();
+    info << u8 ("   \xc2\xb7  entrada ") << (inDb <= -99.0f ? juce::String ("silencio") : juce::String (inDb, 0) + " dB");
+    if (captureNoteTicks > 0 && --captureNoteTicks >= 0 && captureNote.isNotEmpty())
+        info << "   (" << captureNote << ")";
     audioInfo.setText (info, juce::dontSendNotification);
-    audioInfo.setColour (juce::Label::textColourId, st.message.isNotEmpty() ? theme::amber : theme::textDim);
+    audioInfo.setColour (juce::Label::textColourId, st.message.isNotEmpty() || captureNoteTicks > 0 ? theme::amber : theme::textDim);
 
     if (auto audio = processor.getSourceAudio())
     {
         const auto sel = waveform.selectionSamples();
         const double secs = (double) sel.getLength() / audio->sampleRate;
-        fragmentInfo.setText ("Fragmento: " + juce::String (secs, 3) + " s  (" + juce::String ((double) sel.getStart() / audio->sampleRate, 3)
+        fragmentInfo.setText ("Fragm. " + juce::String (secs, 3) + " s  (" + juce::String ((double) sel.getStart() / audio->sampleRate, 3)
                                   + u8 (" \xe2\x80\x93 ") + juce::String ((double) sel.getEnd() / audio->sampleRate, 3) + " s)",
                               juce::dontSendNotification);
     }
@@ -220,10 +262,12 @@ void SpatialEchoEditor::resized()
         a.removeFromTop (20);
         auto top = a.removeFromTop (30);
         loadButton.setBounds (top.removeFromLeft (120));
+        top.removeFromLeft (8);
+        hostButton.setBounds (top.removeFromLeft (190));
         top.removeFromLeft (12);
         fragmentButton.setBounds (top.removeFromRight (120));
         top.removeFromRight (12);
-        fragmentInfo.setBounds (top.removeFromRight (320));
+        fragmentInfo.setBounds (top.removeFromRight (250));
         audioInfo.setBounds (top);
         a.removeFromTop (8);
         waveform.setBounds (a);
