@@ -197,6 +197,23 @@ Orden fijo: carácter → modulación → delay → reverb. Cada bloque tiene su
 11. No implementado (la interfaz no lo ofrece): reordenar la cadena, capas
     vocales, armonización, «aceleración progresiva» del Stutter.
 
+## 13. Interfaz Modo Pro (nueva distribución)
+
+Objetivo: comprobar que la nueva distribución del Modo Pro funciona dentro de FL Studio y que nada del sonido cambia al cambiar de modo. Ventana mínima 1080×790; prueba también a redimensionar.
+
+1. Carga un WAV o captura la entrada, crea 3–4 repeticiones y pulsa **Pro**. Debe aparecer: columna izquierda (preset activo, Velocidad / Intensidad / Mezcla, lista de categorías), centro con pestañas **Cortes / Mapa espacial / Audio-fragmento**, panel de parámetros a la derecha con secciones plegables, línea temporal y barra inferior (Escuchar este punto · Solo · A/B curva · ◀ Punto n/N ▶ · medidor de salida).
+2. **Velocidad**: gira el mando y pulsa «Escuchar este punto». El número de cortes de la curva central y lo que suena deben cambiar a la vez (2–256; el editor limita al máximo útil según las rampas). **Intensidad** = profundidad de los cortes. **Mezcla** = el mismo parámetro Mezcla de la cabecera (comprueba que los dos mandos se mueven juntos).
+3. Ajustes avanzados no relacionados (p. ej. Ataque, Patrón, Reverb activada) deben conservarse al mover Velocidad o Intensidad.
+4. **Generar cortes perfectos**: arrastra en la regla del editor central para seleccionar una zona y pulsa el botón (cambia a «Generar cortes en la selección»). La curva aparece solo en esa zona; fuera, el audio pasa al 100 %. Después pulsa **Manual** y arrastra un punto: lo que se dibuja es lo que suena.
+5. Con una curva manual activa, la columna izquierda avisa «Curva manual activa: Velocidad e Intensidad vuelven al generador». Mover Velocidad vuelve al generador; **Manual** recupera los puntos guardados.
+6. **Ampliar** abre el editor a toda la ventana; **Cerrar** vuelve al centro con la misma curva y zoom.
+7. Categorías: cada botón abre su sección en el panel derecho y hace scroll hasta ella; «Espacio / Paneo» muestra el mapa en el centro y «Cortes / Volume Shaper» vuelve al editor.
+8. Barra inferior: ◀ ▶ cambian la repetición seleccionada; Solo marca solo las seleccionadas; A/B curva se activa tras «Guardar B»; el medidor de salida debe moverse al sonar las repeticiones y marcar en rojo si toca 0 dBFS.
+9. Cambia Fácil ↔ Pro varias veces, guarda el proyecto, ciérralo y vuelve a abrirlo: el preset activo, las curvas y las secciones deben conservarse (las secciones plegadas no se guardan; es solo visual).
+10. Rendimiento: con 16 repeticiones y 256 cortes, arrastra puntos en el editor; la interfaz no debe dar tirones y el audio no debe cortarse (activa el Registro de diagnóstico y mira «perdidas» y «limitador»).
+
+Lo que NO existe todavía (no se anuncia en la interfaz): favoritos de presets, guardar presets propios, deshacer/rehacer global (solo dentro del editor de curva), reordenar la cadena de efectos, aceleración progresiva del Stutter.
+
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la
   repetición ante pequeñas diferencias de posición del host) se reprodujo en
