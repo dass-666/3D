@@ -44,7 +44,6 @@ private:
     void refresh();
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
     void showPresetMenu();
-    void askPresetName();
     void editSelection (const std::function<void (Point&)>&);
 
     EditorContext& ctx;
@@ -52,7 +51,6 @@ private:
     juce::String presetName, presetDesc, presetTag;
     juce::TextButton prevButton { juce::String::fromUTF8 ("\xe2\x97\x80") }, nextButton { juce::String::fromUTF8 ("\xe2\x96\xb6") },
         menuButton { juce::String::fromUTF8 ("\xe2\x96\xbe") }, favButton { juce::String::fromUTF8 ("\xe2\x98\x86") };
-    std::unique_ptr<juce::AlertWindow> nameDialog;
     juce::Slider speed, depth, mix;
     juce::Label speedL, depthL, mixL, quickTitle, advancedTitle, quickNote;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;

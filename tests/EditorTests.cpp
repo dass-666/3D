@@ -5,6 +5,7 @@
 #include "ui/PluginEditor.h"
 #include "model/UserPresets.h"
 #include "ui/SpatialMap.h"
+#include "ui/PresetActions.h"
 #include "audio/EchoEngine.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -527,4 +528,75 @@ TEST_CASE ("Document undo/redo: steps, coalesced drags, redo cleared by a new ed
     ctx.undo();
     CHECK (ctx.scene().source == src);
     CHECK (p.getSourceStatus().loaded);
+}
+
+TEST_CASE ("Action bar: presets are saved, applied and deleted from both modes, without a selection too")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto presetFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-actionbar-presets.json");
+    presetFile.deleteFile();
+    UserPresetStore::overrideSharedFile (presetFile);
+    auto& store = UserPresetStore::shared();
+    for (const auto& up : std::vector<UserPointPreset> (store.presets()))
+        store.remove (up.id);
+
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 40.0, 50.0 }); addPoint (s, { 60.0, 50.0 }); });
+    for (auto mode : { UiMode::Easy, UiMode::Pro })
+    {
+        p.setUiMode (mode);
+        std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+        auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+        ed.setSize (1080, 790);  // minimum size: every action stays visible
+        auto& bar = ed.getActionBar();
+        for (auto* b : { &bar.importButton, &bar.liveButton, &bar.exportButton, &bar.presetsButton, &bar.savePresetButton })
+        {
+            CHECK (b->isVisible());
+            CHECK (bar.isVisible());
+            CHECK (b->getBottom() <= bar.getHeight());
+            CHECK (b->getRight() <= bar.getWidth());
+            CHECK (b->getWidth() >= 110);
+        }
+        snapshot (ed, mode == UiMode::Pro ? "b9-actionbar-pro.png" : "b9-actionbar-easy.png");
+    }
+
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    auto& ctx = ed.getContext();
+    ctx.clearSelection();
+
+    // Without a selection the first repetition is the source of the preset.
+    ctx.edit ([] (Scene& s) { s.points[0].effects.reverb.enabled = true; s.points[0].effects.reverb.decayPercent = 77.0; s.points[0].shaper.enabled = true; s.points[0].shaper.cuts = 48; });
+    const auto id = presets::saveFromSelection (ctx, "Mi lluvia");
+    REQUIRE (id.isNotEmpty());
+    REQUIRE (store.find (id) != nullptr);
+    CHECK (store.find (id)->name == "Mi lluvia");
+    CHECK (ctx.scene().points[0].creativePreset == id);
+    CHECK (presetFile.existsAsFile());  // written at once, survives the project
+
+    // Listed under «Mis presets» and applied to the selected repetition only.
+    bool listed = false;
+    for (auto& e : presets::all())
+        listed |= e.user && e.id == id;
+    CHECK (listed);
+    ctx.select (ctx.scene().points[1].id, false);
+    REQUIRE (presets::applyToSelection (ctx, id));
+    CHECK (ctx.scene().points[1].effects.reverb.enabled);
+    CHECK (ctx.scene().points[1].shaper.cuts == 48);
+    CHECK (ctx.scene().points[1].position.x == 60.0);  // position is never part of a preset
+    CHECK (presets::buildMenu (ctx, ed).getNumItems() > 4);
+
+    // A second store reading the same file sees it (another project / plugin instance).
+    UserPresetStore other (presetFile);
+    REQUIRE (other.load().wasOk());
+    REQUIRE (other.find (id) != nullptr);
+
+    CHECK (store.remove (id));
+    CHECK (store.find (id) == nullptr);
+    UserPresetStore after (presetFile);
+    REQUIRE (after.load().wasOk());
+    CHECK (after.find (id) == nullptr);
+    presetFile.deleteFile();
 }

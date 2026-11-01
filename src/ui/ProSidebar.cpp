@@ -1,6 +1,7 @@
 #include "ui/ProSidebar.h"
 
 #include "plugin/Parameters.h"
+#include "ui/PresetActions.h"
 #include "ui/Theme.h"
 
 namespace ses
@@ -152,26 +153,15 @@ void ProSidebar::editSelection (const std::function<void (Point&)>& fn)
 std::vector<ProSidebar::PresetEntry> ProSidebar::allPresets()
 {
     std::vector<PresetEntry> out;
-    for (const auto& cp : pointPresets())
-        out.push_back ({ cp.id, u8 (cp.name), u8 (cp.description), false });
-    for (const auto& up : UserPresetStore::shared().presets())
-        out.push_back ({ up.id, up.name, up.description, true });
+    for (auto& e : presets::all())
+        out.push_back ({ e.id, e.name, e.description, e.user });
     return out;
 }
 
 void ProSidebar::applyPreset (const juce::String& id)
 {
-    if (const auto* up = UserPresetStore::shared().find (id))
-    {
-        editSelection ([up = *up] (Point& p) { applyUserPreset (p, up); });
-        return;
-    }
-    for (const auto& cp : pointPresets())
-        if (id == cp.id)
-        {
-            editSelection ([&cp] (Point& p) { applyPointPreset (p, cp); });
-            return;
-        }
+    if (! ctx.selection().isEmpty())
+        presets::applyToSelection (ctx, id);
 }
 
 void ProSidebar::stepPreset (int delta)
@@ -191,70 +181,14 @@ void ProSidebar::stepPreset (int delta)
 
 juce::String ProSidebar::saveSelectionAsPreset (const juce::String& name)
 {
-    const auto* p = ctx.primaryPoint();
-    if (p == nullptr)
+    if (ctx.primaryPoint() == nullptr)
         return {};
-    const auto id = UserPresetStore::shared().addFromPoint (name, u8 ("Preset propio"), *p);
-    editSelection ([id] (Point& q) { q.creativePreset = id; });
-    return id;
-}
-
-void ProSidebar::askPresetName()
-{
-    nameDialog = std::make_unique<juce::AlertWindow> (u8 ("Guardar como preset propio"),
-                                                      u8 ("Guarda el sonido, los cortes y la cadena de efectos de esta repetici\xc3\xb3n."),
-                                                      juce::MessageBoxIconType::NoIcon);
-    nameDialog->addTextEditor ("name", u8 ("Mi preset"), u8 ("Nombre"));
-    nameDialog->addButton ("Guardar", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    nameDialog->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    nameDialog->enterModalState (true, juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<ProSidebar> (this)] (int r)
-    {
-        if (safe == nullptr)
-            return;
-        if (r == 1)
-            safe->saveSelectionAsPreset (safe->nameDialog->getTextEditorContents ("name").trim());
-        safe->nameDialog.reset();
-    }), false);
+    return presets::saveFromSelection (ctx, name);
 }
 
 void ProSidebar::showPresetMenu()
 {
-    auto& store = UserPresetStore::shared();
-    const auto presets = allPresets();
-    const auto* p = ctx.primaryPoint();
-    const auto current = p != nullptr ? p->creativePreset : juce::String();
-    juce::PopupMenu m;
-    m.addItem (u8 ("Guardar la repetici\xc3\xb3n como preset propio\xe2\x80\xa6"), p != nullptr, false, [safe = juce::Component::SafePointer<ProSidebar> (this)]
-    {
-        if (safe != nullptr) safe->askPresetName();
-    });
-    if (current.isNotEmpty())
-    {
-        const bool fav = store.isFavourite (current);
-        m.addItem (fav ? u8 ("Quitar de favoritos") : u8 ("Marcar como favorito"), true, false, [current, fav] { UserPresetStore::shared().setFavourite (current, ! fav); });
-        if (store.find (current) != nullptr)
-            m.addItem (u8 ("Eliminar este preset propio"), true, false, [current] { UserPresetStore::shared().remove (current); });
-    }
-    auto addList = [&] (const char* header, auto filter)
-    {
-        bool any = false;
-        for (const auto& e : presets)
-            if (filter (e))
-            {
-                if (! any)
-                {
-                    m.addSeparator();
-                    m.addSectionHeader (u8 (header));
-                    any = true;
-                }
-                m.addItem ((store.isFavourite (e.id) ? u8 ("\xe2\x98\x85 ") : juce::String()) + e.name, true, e.id == current,
-                           [safe = juce::Component::SafePointer<ProSidebar> (this), id = e.id] { if (safe != nullptr) safe->applyPreset (id); });
-            }
-    };
-    addList ("Favoritos", [&] (const PresetEntry& e) { return store.isFavourite (e.id); });
-    addList ("Integrados", [&] (const PresetEntry& e) { return ! e.user; });
-    addList ("Propios", [&] (const PresetEntry& e) { return e.user; });
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuButton));
+    presets::buildMenu (ctx, *this).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuButton));
 }
 
 void ProSidebar::refresh()

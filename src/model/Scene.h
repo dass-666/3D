@@ -381,6 +381,9 @@ struct VoicePreset;
 
 // ---- Editing operations ---------------------------------------------------
 
+// Id of the live-processing pseudo-point (Scene::live.fx): it is not part of
+// `points`, but findPoint returns it so every editor view can edit it.
+inline constexpr const char* kLivePointId = "live";
 Point* findPoint (Scene&, const juce::String& id);
 const Point* findPoint (const Scene&, const juce::String& id);
 

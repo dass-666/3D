@@ -26,7 +26,26 @@ static juce::File& sharedOverride()
     return f;
 }
 
-void UserPresetStore::overrideSharedFile (const juce::File& f) { sharedOverride() = f; }
+static bool& sharedCreated()
+{
+    static bool created = false;
+    return created;
+}
+
+void UserPresetStore::overrideSharedFile (const juce::File& f)
+{
+    sharedOverride() = f;
+    if (sharedCreated())
+    {
+        // Already in use: retarget it (tests) so nothing is written to the real user folder.
+        auto& s = shared();
+        s.file = f;
+        s.data = {};
+        s.loadBroken = false;
+        s.load();
+        s.sendChangeMessage();
+    }
+}
 
 UserPresetStore& UserPresetStore::shared()
 {
@@ -35,6 +54,7 @@ UserPresetStore& UserPresetStore::shared()
     if (! loaded)
     {
         loaded = true;
+        sharedCreated() = true;
         store.load();
     }
     return store;

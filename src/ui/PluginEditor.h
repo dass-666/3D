@@ -3,6 +3,7 @@
 // Main window: header, audio editor (waveform + fragment), spatial map (where),
 // point panel, timeline (when). Easy and Pro share the same state and engine.
 
+#include "ui/ActionBar.h"
 #include "ui/CurveEditor.h"
 #include "ui/EditorContext.h"
 #include "ui/HeaderBar.h"
@@ -37,6 +38,7 @@ public:
     void showCurveEditor (bool);                  // full-window curve editor ("Ampliar")
     bool isCurveEditorOpen() const noexcept { return curveOpen; }
     ProSidebar& getSidebar() noexcept { return sidebar; }
+    ActionBar& getActionBar() noexcept { return actions; }
     PointPanel& getPointPanel() noexcept { return pointPanel; }
     enum class CenterView { Cuts, Map, Audio };
     void setCenterView (CenterView);              // Pro only
@@ -61,6 +63,7 @@ private:
     juce::TooltipWindow tooltips { this, 600 };
 
     HeaderBar header;
+    ActionBar actions;
     WaveformView waveform;
     SpatialMap map;
     PointPanel pointPanel;
@@ -94,6 +97,7 @@ private:
     juce::String captureNote;   // last capture result, shown briefly
     int captureNoteTicks = 0;
     void showHostMenu();
+    void showImportMenu (juce::Component& anchor);
     void hostCapture (const juce::Result&);
     juce::Label audioInfo, fragmentInfo;
     juce::TextButton addButton { juce::String::fromUTF8 ("+ A\xc3\xb1" "adir") }, duplicateButton { "Duplicar" },

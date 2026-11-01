@@ -34,12 +34,15 @@ HeaderBar::HeaderBar (EditorContext& c) : ctx (c)
     };
     addAndMakeVisible (sceneName);
 
-    sceneMenu.setTooltip ("Guardar o cargar la escena completa (.sesscene, incluye el audio si cabe)");
+    sceneMenu.setTooltip (u8 ("Escena = el proyecto del plugin completo: todas las repeticiones y el fragmento (.sesscene). "
+                              "Para un sonido reutilizable usa \xc2\xabGuardar preset\xc2\xbb; para audio, \xc2\xabExportar a Playlist\xc2\xbb."));
     sceneMenu.onClick = [this]
     {
         juce::PopupMenu m;
-        m.addItem (1, u8 ("Guardar escena\xe2\x80\xa6"));
-        m.addItem (2, u8 ("Cargar escena\xe2\x80\xa6"));
+        m.addSectionHeader (u8 ("Escena completa: repeticiones + fragmento"));
+        m.addItem (1, u8 ("Guardar escena (.sesscene)\xe2\x80\xa6"));
+        m.addItem (2, u8 ("Cargar escena (.sesscene)\xe2\x80\xa6"));
+        m.addItem (3, u8 ("Un sonido reutilizable: \xc2\xabGuardar preset\xc2\xbb. Audio: \xc2\xabExportar a Playlist\xc2\xbb."), false, false);
         m.addSeparator();
         juce::PopupMenu size;
         const int cur = ctx.processor.getUiScalePercent();
@@ -255,7 +258,10 @@ void HeaderBar::resized()
 
 void HeaderBar::chooseSave()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Guardar escena", juce::File(), "*.sesscene");
+    auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Spatial Echo Studio").getChildFile ("Escenas");
+    dir.createDirectory();
+    auto name = juce::File::createLegalFileName (ctx.scene().name.isEmpty() ? juce::String ("Escena") : ctx.scene().name);
+    chooser = std::make_unique<juce::FileChooser> ("Guardar escena (.sesscene)", dir.getChildFile (name + ".sesscene"), "*.sesscene");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
                           [safe = juce::Component::SafePointer<HeaderBar> (this)] (const juce::FileChooser& fc)
                           {
@@ -270,7 +276,9 @@ void HeaderBar::chooseSave()
 
 void HeaderBar::chooseLoad()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Cargar escena", juce::File(), "*.sesscene");
+    chooser = std::make_unique<juce::FileChooser> ("Cargar escena (.sesscene)",
+                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Spatial Echo Studio").getChildFile ("Escenas"),
+                                                   "*.sesscene");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [safe = juce::Component::SafePointer<HeaderBar> (this)] (const juce::FileChooser& fc)
                           {

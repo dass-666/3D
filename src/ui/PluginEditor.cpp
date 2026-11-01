@@ -9,16 +9,17 @@ const juce::String dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
 }
 
 SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
-    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx), sidebar (ctx)
+    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), actions (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx), sidebar (ctx)
 {
     ctx.addListener (this);
 
-    for (juce::Component* c : { (juce::Component*) &header, (juce::Component*) &waveform, (juce::Component*) &map,
+    for (juce::Component* c : { (juce::Component*) &header, (juce::Component*) &actions, (juce::Component*) &waveform, (juce::Component*) &map,
                                 (juce::Component*) &pointPanel, (juce::Component*) &timeline })
         addAndMakeVisible (c);
 
     header.onModeChange = [this] (bool pro) { setProMode (pro); };
     header.onScaleChange = [this] (int pct) { setUiScale (pct); };
+    actions.onImport = [this] (juce::Component& anchor) { showImportMenu (anchor); };
     addChildComponent (curveEditor);
     curveEditor.onClose = [this] { showCurveEditor (false); };
     curveEditor.onExpand = [this] { showCurveEditor (true); };
@@ -255,6 +256,7 @@ void SpatialEchoEditor::timerCallback()
 {
     ctx.refreshIfChanged();
     header.updateTransport();
+    actions.tick();
     const float outPeak = processor.takeOutputPeakDb();  // always drained, so no stale peak-hold when the meter appears
     if (meter.isVisible())
         meter.push (outPeak);
@@ -286,9 +288,28 @@ void SpatialEchoEditor::showHostMenu()
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (hostButton));
 }
 
+void SpatialEchoEditor::showImportMenu (juce::Component& anchor)
+{
+    if (processor.isHostRecording())
+    {
+        hostCapture (processor.stopHostRecording());
+        return;
+    }
+    juce::PopupMenu m;
+    m.addItem (u8 ("Cargar archivo WAV\xe2\x80\xa6"), [this] { chooseWav(); });
+    m.addSeparator();
+    m.addSectionHeader (u8 ("Capturar la entrada de esta pista del Mixer"));
+    for (double secs : { 1.0, 2.0, 4.0, 8.0 })
+        m.addItem (u8 ("Capturar \xc3\xbaltimos ") + juce::String (secs, 0) + " s", [this, secs] { hostCapture (processor.captureHostLast (secs)); });
+    m.addItem (u8 ("Empezar a grabar (pulsa de nuevo \xc2\xabImportar audio\xc2\xbb para detener y usar)"),
+               [this] { processor.startHostRecording(); refreshAudioInfo(); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (anchor));
+}
+
 void SpatialEchoEditor::hostCapture (const juce::Result& r)
 {
     captureNote = r.wasOk() ? u8 ("Captura usada como fragmento") : r.getErrorMessage();
+    actions.showNote (captureNote, r.failed());
     captureNoteTicks = 60;  // ~ 12 s at the info refresh rate
     refreshAudioInfo();
 }
@@ -512,6 +533,7 @@ void SpatialEchoEditor::resized()
 {
     auto r = getLocalBounds();
     header.setBounds (r.removeFromTop (72));
+    actions.setBounds (r.removeFromTop (curveOpen ? 0 : 44));
     auto bottom = r.removeFromBottom (diagnosticsLabel.isVisible() ? 44 : 24);
     {
         auto line = bottom.reduced (14, 2);
