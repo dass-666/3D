@@ -460,13 +460,14 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
                 break;
         }
         const auto placement = placementFor (p, hostSampleRate, st.gainDb);
+        const auto slices = stutterSlices (st);
         for (int k = 0; k < st.repeats; ++k)
         {
             PlannedEcho e;
             e.key = key;
             e.index = 1 + k;
             e.pointBeat = pointBeat;
-            e.beat = pointBeat + st.offsetBeats + k * div;
+            e.beat = pointBeat + slices[(size_t) k].beat;
             e.freeTime = freeTime;
             e.seconds = timing.seconds;
             e.shaper = shaper;
@@ -478,7 +479,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.pitchPending = pitchPending;
             e.regionStart = regionStart;
             e.regionEnd = regionEnd;
-            e.sliceBeats = div * st.sliceLengthPercent / 100.0;
+            e.sliceBeats = slices[(size_t) k].gapBeats * st.sliceLengthPercent / 100.0;
             e.alignEnd = alignEnd;
             e.placement = placement;
             plan->echoes.push_back (std::move (e));

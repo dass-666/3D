@@ -7,6 +7,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
 #include <cmath>
@@ -483,4 +484,79 @@ TEST_CASE ("Processor: the effect chain and the formant render reach the host ou
     for (int i = from; i < from + win; ++i)
         diff += std::abs (clean[(size_t) i] - robot[(size_t) i]);
     CHECK (diff / win > 0.05);
+}
+
+TEST_CASE ("Stutter: acceleration brings the slices progressively closer (or apart), keeps the total duration, and the engine fires them where the model says")
+{
+    StutterSettings st;
+    st.enabled = true;
+    st.repeats = 8;
+    st.division = StutterSettings::Division::Sixteenth;  // 0.25 beat, total 2 beats
+    st.accelPercent = 0.0;
+    const auto even = stutterSlices (st);
+    REQUIRE (even.size() == 8);
+    for (size_t k = 0; k < even.size(); ++k)
+    {
+        CHECK_THAT (even[k].beat, Catch::Matchers::WithinAbs (0.25 * (double) k, 1e-12));
+        CHECK_THAT (even[k].gapBeats, Catch::Matchers::WithinAbs (0.25, 1e-12));
+    }
+    st.accelPercent = 100.0;
+    const auto accel = stutterSlices (st);
+    CHECK_THAT (accel[0].beat, Catch::Matchers::WithinAbs (0.0, 1e-12));
+    for (size_t k = 1; k < accel.size(); ++k)
+    {
+        CHECK (accel[k].beat > accel[k - 1].beat);
+        CHECK (accel[k].gapBeats < accel[k - 1].gapBeats);  // closer and closer
+    }
+    CHECK_THAT (accel.back().beat + accel.back().gapBeats, Catch::Matchers::WithinAbs (2.0, 1e-9));  // same total
+    CHECK (accel[0].gapBeats > 0.5);  // clearly different from even
+    st.accelPercent = -100.0;
+    const auto decel = stutterSlices (st);
+    for (size_t k = 1; k < decel.size(); ++k)
+        CHECK (decel[k].gapBeats > decel[k - 1].gapBeats);
+    st.offsetBeats = 1.0;
+    CHECK_THAT (stutterSlices (st)[0].beat, Catch::Matchers::WithinAbs (1.0, 1e-12));
+    st.offsetBeats = 0.0;
+
+    // Engine: the onsets land on the accelerated times, sample-exact, no drops.
+    const double sr = 48000.0, bpm = 120.0;
+    EchoEngine e;
+    e.prepare (sr);
+    Scene s;
+    Point p;
+    p.id = "p"; p.number = 1; p.timing.beat = 1.0;
+    p.stutter = st;
+    p.stutter.accelPercent = 100.0;
+    p.stutter.sliceLengthPercent = 40.0;
+    p.stutter.region = StutterSettings::Region::Start;
+    s.points.push_back (p);
+    auto sample = std::make_shared<const SampleBuffer> (sine (220.0, sr, 1.0));
+    auto plan = buildPlan (s, sample, sr);
+    REQUIRE (plan->echoes.size() == 8);
+    std::vector<float> out;
+    const int block = 256;
+    juce::AudioBuffer<float> buf (1, block);
+    int done = 0;
+    while (done < (int) (3.5 * sr))
+    {
+        buf.clear();
+        e.process (buf, plan.get(), { bpm, done * bpm / 60.0 / sr, true }, done == 0, false, 1.0f, 1.0f);
+        for (int i = 0; i < block; ++i)
+            out.push_back (buf.getSample (0, i));
+        done += block;
+    }
+    const auto on = onsets (out);
+    REQUIRE (on.size() == 8);
+    const double beatSamples = 60.0 / bpm * sr;
+    for (size_t k = 0; k < on.size(); ++k)
+        CHECK (std::abs (on[k] - (beatSamples + accel[k].beat * beatSamples)) <= 2.0);
+    CHECK (e.stats().dropped == 0);
+
+    // Persistence; older scenes without the key load as even slices.
+    Document d;
+    d.scenes.push_back (s);
+    d.activeSceneId = s.id;
+    const auto back = documentFromJson (toJson (d));
+    REQUIRE (back);
+    CHECK_THAT (back.value->scenes[0].points[0].stutter.accelPercent, Catch::Matchers::WithinAbs (100.0, 1e-9));
 }

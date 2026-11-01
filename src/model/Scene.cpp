@@ -679,7 +679,28 @@ StutterSettings clamped (StutterSettings s)
     s.sliceLengthPercent = std::clamp (s.sliceLengthPercent, 10.0, 100.0);
     s.offsetBeats = std::clamp (s.offsetBeats, 0.0, limits::maxBeat);
     s.gainDb = std::clamp (s.gainDb, limits::minGainDb, limits::maxGainDb);
+    s.accelPercent = std::clamp (s.accelPercent, -100.0, 100.0);
     return s;
+}
+
+std::vector<StutterSlice> stutterSlices (const StutterSettings& in)
+{
+    const auto st = clamped (in);
+    const int n = st.repeats;
+    const double div = beatsPerDivision (st.division);
+    const double total = n * div;
+    const double e = 1.0 + 2.0 * std::abs (st.accelPercent) / 100.0;  // 1..3
+    std::vector<double> t ((size_t) n + 1);
+    for (int k = 0; k <= n; ++k)
+    {
+        const double u = (double) k / n;
+        const double w = st.accelPercent > 0.0 ? 1.0 - std::pow (1.0 - u, e) : (st.accelPercent < 0.0 ? std::pow (u, e) : u);
+        t[(size_t) k] = st.offsetBeats + total * w;
+    }
+    std::vector<StutterSlice> out ((size_t) n);
+    for (int k = 0; k < n; ++k)
+        out[(size_t) k] = { t[(size_t) k], std::max (1.0e-4, t[(size_t) k + 1] - t[(size_t) k]) };
+    return out;
 }
 
 int applyVoicePreset (Scene& scene, const std::vector<juce::String>& pointIds, const VoicePreset& preset)

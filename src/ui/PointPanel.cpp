@@ -223,9 +223,13 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     sliceLength.onValueChange = [this] { editPrimary ([v = sliceLength.getValue()] (Scene&, Point& p) { p.stutter.sliceLengthPercent = v; }); };
     offset.onValueChange = [this] { editPrimary ([v = offset.getValue()] (Scene&, Point& p) { p.stutter.offsetBeats = v; }); };
     stutterGain.onValueChange = [this] { editPrimary ([v = stutterGain.getValue()] (Scene&, Point& p) { p.stutter.gainDb = v; }); };
+    setupSlider (stutterAccel, stutterAccelL, u8 ("Aceleraci\xc3\xb3n"), -100, 100, 1, " %");
+    stutterAccel.setDoubleClickReturnValue (true, 0.0);
+    stutterAccel.setTooltip (u8 ("> 0: los cortes se acercan progresivamente (como una pelota que bota); < 0: se separan. La duraci\xc3\xb3n total no cambia."));
+    stutterAccel.onValueChange = [this] { editPrimary ([v = stutterAccel.getValue()] (Scene&, Point& p) { p.stutter.accelPercent = v; }); };
     manualStart.onValueChange = [this] { editPrimary ([v = manualStart.getValue() / 100.0] (Scene&, Point& p) { p.stutter.manualStart = v; p.stutter = clamped (p.stutter); }); };
     manualEnd.onValueChange = [this] { editPrimary ([v = manualEnd.getValue() / 100.0] (Scene&, Point& p) { p.stutter.manualEnd = v; p.stutter = clamped (p.stutter); }); };
-    stutterNote.setText (u8 ("Aceleraci\xc3\xb3n progresiva: pr\xc3\xb3ximamente."), juce::dontSendNotification);
+    stutterNote.setText (u8 ("Lo que se dibuja en la l\xc3\xadnea temporal es lo que suena."), juce::dontSendNotification);
     stutterNote.setFont (theme::font (11.0f));
     stutterNote.setColour (juce::Label::textColourId, theme::textFaint);
     content.addAndMakeVisible (stutterNote);
@@ -633,11 +637,12 @@ void PointPanel::refresh()
     setIfIdle (sliceLength, st.sliceLengthPercent);
     setIfIdle (offset, st.offsetBeats);
     setIfIdle (stutterGain, st.gainDb);
+    setIfIdle (stutterAccel, st.accelPercent);
     setIfIdle (manualStart, st.manualStart * 100.0);
     setIfIdle (manualEnd, st.manualEnd * 100.0);
     const bool manual = st.region == StutterSettings::Region::Manual;
     for (juce::Component* c : { (juce::Component*) &regionBox, (juce::Component*) &divisionBox, (juce::Component*) &repeats,
-                                (juce::Component*) &sliceLength, (juce::Component*) &offset, (juce::Component*) &stutterGain })
+                                (juce::Component*) &sliceLength, (juce::Component*) &offset, (juce::Component*) &stutterGain, (juce::Component*) &stutterAccel })
         c->setEnabled (st.enabled);
     manualStart.setEnabled (st.enabled && manual);
     manualEnd.setEnabled (st.enabled && manual);
@@ -911,6 +916,7 @@ int PointPanel::layoutContent (int width)
         labelled (repeatsL, repeats);
         labelled (sliceLengthL, sliceLength);
         labelled (offsetL, offset, pro);
+        labelled (stutterAccelL, stutterAccel);
         labelled (stutterGainL, stutterGain, pro);
         place (stutterNote, 16);
     };

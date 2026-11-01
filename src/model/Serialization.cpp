@@ -92,6 +92,7 @@ var pointToVar (const Point& p)
     set (st, "sliceLengthPercent", p.stutter.sliceLengthPercent);
     set (st, "offsetBeats", p.stutter.offsetBeats);
     set (st, "gainDb", p.stutter.gainDb);
+    set (st, "accelPercent", p.stutter.accelPercent);
     set (o, "stutter", st);
 
     auto sh = obj();
@@ -347,6 +348,7 @@ struct Reader
                 warnings.add (where + ".stutter.division: unknown, using 1/16");
             x.sliceLengthPercent = number (st, "sliceLengthPercent", 100.0, 10.0, 100.0, where + ".stutter");
             x.offsetBeats = number (st, "offsetBeats", 0.0, 0.0, limits::maxBeat, where + ".stutter");
+            x.accelPercent = number (st, "accelPercent", 0.0, -100.0, 100.0, where + ".stutter");
             x.gainDb = number (st, "gainDb", 0.0, limits::minGainDb, limits::maxGainDb, where + ".stutter");
             p.stutter = clamped (x);
         }

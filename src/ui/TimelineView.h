@@ -39,6 +39,7 @@ private:
         double beat = 0.0, lengthBeats = 0.0;
         int lane = 0;
         std::vector<double> sliceOffsets;  // stutter slices, beats after `beat`
+        std::vector<double> sliceLengths;  // one per slice (acceleration makes them differ)
         double sliceBeats = 0.0;
         bool pitchPending = false;
         ShaperSettings shaper;             // drawn as a curve when enabled

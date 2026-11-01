@@ -95,8 +95,8 @@ private:
     juce::Label stutterNote;
     juce::ToggleButton stutterToggle { "Activar" };
     juce::ComboBox regionBox, divisionBox;
-    juce::Slider repeats, sliceLength, offset, stutterGain, manualStart, manualEnd;
-    juce::Label regionL, divisionL, repeatsL, sliceLengthL, offsetL, stutterGainL, manualStartL, manualEndL;
+    juce::Slider repeats, sliceLength, offset, stutterGain, stutterAccel, manualStart, manualEnd;
+    juce::Label regionL, divisionL, repeatsL, sliceLengthL, offsetL, stutterGainL, stutterAccelL, manualStartL, manualEndL;
     juce::TextButton copyButton { "Copiar Stutter" }, pasteButton { "Pegar Stutter" };
 
     // Effects with real processing

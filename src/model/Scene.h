@@ -114,7 +114,9 @@ struct VoiceRef
 
 // Stutter / beat repeat: the repetition is cut into `repeats` short slices
 // played one per `division` step, starting `offsetBeats` into the point's
-// moment. Acceleration is deliberately not implemented yet.
+// moment. `accelPercent` warps the slice times: > 0 the slices get closer
+// (accelerating, like a bouncing ball), < 0 they spread out; the total
+// duration (repeats x division) stays the same.
 struct StutterSettings
 {
     enum class Region { Whole, Start, End, Manual };
@@ -128,8 +130,15 @@ struct StutterSettings
     double sliceLengthPercent = 100.0;          // 10..100 % of one division step
     double offsetBeats = 0.0;                   // where the effect starts inside the repetition (>= 0)
     double gainDb = 0.0;                        // -36..+12, on top of the point gain
+    double accelPercent = 0.0;                  // -100..100: 0 = even slices
     bool operator== (const StutterSettings&) const = default;
 };
+
+// Start of every slice in beats after the point's moment (offsetBeats included)
+// and the gap to the next one (the last gap equals the previous). Shared by the
+// engine and the timeline, so what is drawn is what plays.
+struct StutterSlice { double beat = 0.0, gapBeats = 0.0; };
+std::vector<StutterSlice> stutterSlices (const StutterSettings&);
 
 double beatsPerDivision (StutterSettings::Division);
 juce::String toString (StutterSettings::Division);

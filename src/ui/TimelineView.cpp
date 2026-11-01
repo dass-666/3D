@@ -108,7 +108,7 @@ void TimelineView::layoutBlocks()
         const auto region = clamped (p.region);
         const double voiceSeconds = fragmentSeconds * (region.end - region.start);
         const double voiceUnits = juce::jmax (0.02, freeTime() ? voiceSeconds : voiceSeconds * bpm / 60.0);
-        Block b { p.id, p.number, p.enabled, freeTime() ? p.timing.seconds : p.timing.beat, voiceUnits, 0, {}, 0.0,
+        Block b { p.id, p.number, p.enabled, freeTime() ? p.timing.seconds : p.timing.beat, voiceUnits, 0, {}, {}, 0.0,
                   ctx.processor.isPitchPending (p), clamped (p.shaper), voiceSeconds };
         if (p.stutter.enabled)
         {
@@ -116,9 +116,12 @@ void TimelineView::layoutBlocks()
             const double div = beatsPerDivision (st.division) * upb;
             b.sliceBeats = juce::jmin (voiceUnits, div * st.sliceLengthPercent / 100.0);
             b.voiceSeconds = juce::jmin (voiceSeconds, beatsPerDivision (st.division) * 60.0 / bpm * st.sliceLengthPercent / 100.0);
-            for (int k = 0; k < st.repeats; ++k)
-                b.sliceOffsets.push_back (st.offsetBeats * upb + k * div);
-            b.lengthBeats = st.offsetBeats * upb + (st.repeats - 1) * div + b.sliceBeats;
+            for (const auto& sl : stutterSlices (st))
+            {
+                b.sliceOffsets.push_back (sl.beat * upb);
+                b.sliceLengths.push_back (juce::jmin (voiceUnits, sl.gapBeats * upb * st.sliceLengthPercent / 100.0));
+            }
+            b.lengthBeats = b.sliceOffsets.back() + b.sliceLengths.back();
         }
         blocks.push_back (std::move (b));
     }
@@ -232,10 +235,11 @@ void TimelineView::paint (juce::Graphics& g)
             g.setColour (b.enabled ? col.withAlpha (0.25f) : theme::outline.withAlpha (0.5f));
             g.fillRoundedRectangle (r, 4.0f);
             g.setColour (b.enabled ? col.withAlpha (sel ? 0.95f : 0.8f) : theme::outline);
-            for (double off : b.sliceOffsets)
+            for (size_t si = 0; si < b.sliceOffsets.size(); ++si)
             {
+                const double off = b.sliceOffsets[si];
                 const float x0 = xForBeat (b.beat + off);
-                const float x1 = juce::jmax (x0 + 2.0f, xForBeat (b.beat + off + b.sliceBeats) - 1.0f);
+                const float x1 = juce::jmax (x0 + 2.0f, xForBeat (b.beat + off + b.sliceLengths[si]) - 1.0f);
                 g.fillRoundedRectangle (juce::Rectangle<float> (x0, r.getY() + 2.0f, x1 - x0, r.getHeight() - 4.0f), 2.0f);
             }
         }
@@ -264,8 +268,11 @@ void TimelineView::paint (juce::Graphics& g)
             if (b.sliceOffsets.empty())
                 drawCurve (r.getX(), r.getRight());
             else
-                for (double off : b.sliceOffsets)
-                    drawCurve (xForBeat (b.beat + off), juce::jmax (xForBeat (b.beat + off) + 2.0f, xForBeat (b.beat + off + b.sliceBeats) - 1.0f));
+                for (size_t si = 0; si < b.sliceOffsets.size(); ++si)
+                {
+                    const double off = b.sliceOffsets[si];
+                    drawCurve (xForBeat (b.beat + off), juce::jmax (xForBeat (b.beat + off) + 2.0f, xForBeat (b.beat + off + b.sliceLengths[si]) - 1.0f));
+                }
         }
         if (b.pitchPending)
         {
