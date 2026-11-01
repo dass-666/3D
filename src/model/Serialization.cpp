@@ -100,11 +100,17 @@ var pointToVar (const Point& p)
     set (sh, "division", toString (p.shaper.division));
     set (sh, "depthPercent", p.shaper.depthPercent);
     set (sh, "openPercent", p.shaper.openPercent);
-    set (sh, "fadeMs", p.shaper.fadeMs);
+    set (sh, "attackMs", p.shaper.attackMs);
+    set (sh, "releaseMs", p.shaper.releaseMs);
+    set (sh, "distribution", toString (p.shaper.distribution));
     set (sh, "accelPercent", p.shaper.accelPercent);
+    set (sh, "pattern", p.shaper.pattern);
     set (sh, "wholeVoice", p.shaper.wholeVoice);
     set (sh, "regionStart", p.shaper.regionStart);
     set (sh, "regionEnd", p.shaper.regionEnd);
+    set (sh, "lengthMs", p.shaper.lengthMs);
+    set (sh, "makeupDb", p.shaper.makeupDb);
+    set (sh, "autoLevel", p.shaper.autoLevel);
     set (o, "shaper", sh);
 
     auto fx = obj();
@@ -306,11 +312,31 @@ struct Reader
                 warnings.add (where + ".shaper.division: unknown, using 1/16");
             x.depthPercent = number (sh, "depthPercent", 100.0, 0.0, 100.0, where + ".shaper");
             x.openPercent = number (sh, "openPercent", 50.0, 5.0, 95.0, where + ".shaper");
-            x.fadeMs = number (sh, "fadeMs", 3.0, 0.0, limits::maxShaperFadeMs, where + ".shaper");
+            if (sh.hasProperty ("attackMs") || sh.hasProperty ("releaseMs"))
+            {
+                x.attackMs = number (sh, "attackMs", 1.0, limits::minShaperRampMs, limits::maxShaperAttackMs, where + ".shaper");
+                x.releaseMs = number (sh, "releaseMs", 3.0, limits::minShaperRampMs, limits::maxShaperReleaseMs, where + ".shaper");
+            }
+            else
+            {
+                // Earlier scenes had one smoothing time: use it for both ramps.
+                const double fade = number (sh, "fadeMs", 3.0, 0.0, 50.0, where + ".shaper");
+                x.attackMs = x.releaseMs = std::max (limits::minShaperRampMs, fade);
+            }
+            if (auto d = shaperDistributionFromString (text (sh, "distribution", "uniform")))
+                x.distribution = *d;
+            else
+                warnings.add (where + ".shaper.distribution: unknown, using uniform");
             x.accelPercent = number (sh, "accelPercent", 0.0, 0.0, 100.0, where + ".shaper");
+            if (! sh.hasProperty ("distribution") && x.accelPercent > 0.0)
+                x.distribution = ShaperSettings::Distribution::Accelerating;  // earlier meaning of accelPercent
+            x.pattern = text (sh, "pattern");
             x.wholeVoice = flag (sh, "wholeVoice", true);
             x.regionStart = number (sh, "regionStart", 0.0, 0.0, 1.0, where + ".shaper");
             x.regionEnd = number (sh, "regionEnd", 1.0, 0.0, 1.0, where + ".shaper");
+            x.lengthMs = number (sh, "lengthMs", 0.0, 0.0, 60000.0, where + ".shaper");
+            x.makeupDb = number (sh, "makeupDb", 0.0, -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb, where + ".shaper");
+            x.autoLevel = flag (sh, "autoLevel", false);
             p.shaper = clamped (x);
         }
 

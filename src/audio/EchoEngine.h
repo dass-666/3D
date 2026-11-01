@@ -57,15 +57,21 @@ struct PlannedEcho
     bool alignEnd = false;
     Placement placement;
     ShaperSettings shaper;   // volume curve on top (enabled or not)
+    float shaperLevel = 1.0f;  // makeup / auto level applied with the curve (linear)
     PointEffects effects;
     float highpassCoef = 0.0f;  // one-pole, 0 = off
 };
 
 // Volume Shaper evaluation (pure; shared by the engine and the UI preview).
-// `t` and `length` in seconds from the start of the voice; `periodSeconds`
-// is only used by the Division mode (tempo in force). Returns 0..1 before
-// anticlick smoothing.
+// `t` and `length` in seconds from the start of the voice; `divisionSeconds`
+// is only used by the Division mode (tempo in force). Returns 0..1, with the
+// attack/release ramps already inside: this IS the gain the engine applies.
 float shaperGain (const ShaperSettings&, double t, double length, double divisionSeconds) noexcept;
+// Shaped span of a voice of `length` seconds (false = nothing is shaped).
+bool shaperSpan (const ShaperSettings&, double length, double& start, double& end) noexcept;
+// Makeup gain (linear) applied together with the curve: makeupDb plus, with
+// autoLevel, the RMS the closed parts remove (capped at +6 dB; +12 dB in total).
+float shaperLevelGain (const ShaperSettings&, double voiceSeconds, double divisionSeconds);
 
 // Everything the audio thread needs, rendered at the host sample rate.
 // Immutable once published.
@@ -194,7 +200,6 @@ private:
         bool reverse = false;
         float release = 1.0f;          // < 1 while fading out
         bool releasing = false;
-        float shaperEnv = 1.0f;        // smoothed Volume Shaper gain
     };
 
     struct Pending

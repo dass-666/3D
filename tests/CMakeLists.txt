@@ -13,7 +13,8 @@ add_executable(ses_tests
     EditorTests.cpp
     PitchStutterTests.cpp
     EngineTests.cpp
-    FreeTimeShaperTests.cpp)
+    FreeTimeShaperTests.cpp
+    ShaperLevelProbe.cpp)
 
 target_link_libraries(ses_tests PRIVATE
     ses_shared

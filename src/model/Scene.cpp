@@ -2,6 +2,7 @@
 #include "model/VoicePresets.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace ses
 {
@@ -120,36 +121,83 @@ std::optional<ShaperSettings::RateMode> shaperRateModeFromString (const juce::St
     return std::nullopt;
 }
 
+juce::String toString (ShaperSettings::Distribution d)
+{
+    switch (d)
+    {
+        case ShaperSettings::Distribution::Uniform:      return "uniform";
+        case ShaperSettings::Distribution::Accelerating: return "accelerating";
+        case ShaperSettings::Distribution::Decelerating: return "decelerating";
+    }
+    return "uniform";
+}
+
+std::optional<ShaperSettings::Distribution> shaperDistributionFromString (const juce::String& s)
+{
+    if (s == "uniform")      return ShaperSettings::Distribution::Uniform;
+    if (s == "accelerating") return ShaperSettings::Distribution::Accelerating;
+    if (s == "decelerating") return ShaperSettings::Distribution::Decelerating;
+    return std::nullopt;
+}
+
 ShaperSettings clamped (ShaperSettings s)
 {
     s.cuts = std::clamp (s.cuts, limits::minShaperCuts, limits::maxShaperCuts);
     s.periodMs = std::clamp (s.periodMs, limits::minShaperPeriodMs, limits::maxShaperPeriodMs);
     s.depthPercent = std::clamp (s.depthPercent, 0.0, 100.0);
     s.openPercent = std::clamp (s.openPercent, 5.0, 95.0);
-    s.fadeMs = std::clamp (s.fadeMs, 0.0, limits::maxShaperFadeMs);
+    s.attackMs = std::clamp (s.attackMs, limits::minShaperRampMs, limits::maxShaperAttackMs);
+    s.releaseMs = std::clamp (s.releaseMs, limits::minShaperRampMs, limits::maxShaperReleaseMs);
     s.accelPercent = std::clamp (s.accelPercent, 0.0, 100.0);
     s.regionStart = std::clamp (s.regionStart, 0.0, 1.0);
     s.regionEnd = std::clamp (s.regionEnd, s.regionStart, 1.0);
+    s.lengthMs = std::clamp (s.lengthMs, 0.0, 60000.0);
+    s.makeupDb = std::clamp (s.makeupDb, -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb);
+    // Pattern: only 'x' and '.', at most 64 steps; anything else is dropped.
+    juce::String pat;
+    for (auto c : s.pattern)
+        if ((c == 'x' || c == 'X' || c == '.') && pat.length() < 64)
+            pat << (c == '.' ? '.' : 'x');
+    s.pattern = pat.containsChar ('.') ? pat : juce::String();  // all open = no pattern
     return s;
+}
+
+double minimumCutSeconds (const ShaperSettings& s)
+{
+    return (s.attackMs + s.releaseMs + 1.0) / 1000.0;
+}
+
+int maxUsefulCuts (const ShaperSettings& s, double spanSeconds)
+{
+    if (spanSeconds <= 0.0)
+        return limits::minShaperCuts;
+    return std::clamp ((int) std::floor (spanSeconds / minimumCutSeconds (s)), limits::minShaperCuts, limits::maxShaperCuts);
 }
 
 const std::vector<ShaperPreset>& shaperPresets()
 {
     static const std::vector<ShaperPreset> presets = []
     {
+        using S = ShaperSettings;
         std::vector<ShaperPreset> v;
         auto add = [&] (const char* id, const char* name, auto&& fn)
         {
-            ShaperSettings s;
+            S s;
             s.enabled = true;
             fn (s);
             v.push_back ({ id, name, clamped (s) });
         };
-        add ("gate", "Gate", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Square; s.cuts = 8; s.depthPercent = 100; s.openPercent = 50; });
-        add ("tremolo", "Tremolo", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Triangle; s.rateMode = ShaperSettings::RateMode::Milliseconds; s.periodMs = 120; s.depthPercent = 60; });
-        add ("trance-gate", "Trance Gate", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Square; s.rateMode = ShaperSettings::RateMode::Division; s.division = StutterSettings::Division::Sixteenth; s.depthPercent = 100; s.openPercent = 50; });
-        add ("accel", "Cortes acelerados", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Square; s.cuts = 12; s.depthPercent = 100; s.openPercent = 50; s.accelPercent = 70; });
-        add ("fade-end", "Fade final", [] (ShaperSettings& s) { s.shape = ShaperSettings::Shape::Saw; s.cuts = 2; s.depthPercent = 100; s.wholeVoice = false; s.regionStart = 0.5; s.regionEnd = 1.0; s.fadeMs = 10; });
+        add ("gate", "Gate", [] (S& s) { s.cuts = 8; s.openPercent = 50; s.attackMs = 1; s.releaseMs = 5; });
+        add ("fast-gate", "Fast Gate", [] (S& s) { s.cuts = 24; s.openPercent = 45; s.attackMs = 0.5; s.releaseMs = 2; s.autoLevel = true; });
+        add ("trance-gate", "Trance Gate", [] (S& s) { s.rateMode = S::RateMode::Division; s.division = StutterSettings::Division::Sixteenth; s.openPercent = 50; s.attackMs = 1; s.releaseMs = 8; });
+        add ("machine-gun", "Machine Gun", [] (S& s) { s.cuts = 64; s.openPercent = 40; s.attackMs = 0.3; s.releaseMs = 1.5; s.autoLevel = true; });
+        add ("vocal-chop", "Vocal Chop", [] (S& s) { s.cuts = 6; s.openPercent = 65; s.attackMs = 2; s.releaseMs = 12; s.pattern = "xx.x"; });
+        add ("glitch", "Glitch Vocal", [] (S& s) { s.cuts = 32; s.openPercent = 35; s.attackMs = 0.3; s.releaseMs = 2; s.pattern = "x.xx.x.."; s.autoLevel = true; });
+        add ("tremolo", "Tremolo", [] (S& s) { s.shape = S::Shape::Triangle; s.rateMode = S::RateMode::Milliseconds; s.periodMs = 120; s.depthPercent = 60; });
+        add ("accel", "Cortes acelerados", [] (S& s) { s.cuts = 16; s.openPercent = 50; s.distribution = S::Distribution::Accelerating; s.accelPercent = 70; s.releaseMs = 4; });
+        add ("decel", "Cortes desacelerados", [] (S& s) { s.cuts = 16; s.openPercent = 50; s.distribution = S::Distribution::Decelerating; s.accelPercent = 70; s.releaseMs = 4; });
+        add ("fade-stutter", "Fade Stutter", [] (S& s) { s.shape = S::Shape::Saw; s.cuts = 12; s.depthPercent = 100; s.attackMs = 0.5; s.releaseMs = 2; });
+        add ("fade-end", "Fade final", [] (S& s) { s.shape = S::Shape::Saw; s.cuts = 2; s.depthPercent = 100; s.wholeVoice = false; s.regionStart = 0.5; s.regionEnd = 1.0; s.attackMs = 5; s.releaseMs = 20; });
         return v;
     }();
     return presets;

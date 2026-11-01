@@ -214,21 +214,143 @@ TEST_CASE ("Volume Shaper: pure gain function")
     sh.enabled = false;
     CHECK (shaperGain (sh, 0.6, 1.0, 0.0) == 1.0f);
 
-    // Acceleration: later cuts are shorter (edges get closer together).
-    ShaperSettings acc;
-    acc.enabled = true; acc.cuts = 4; acc.accelPercent = 100.0; acc.depthPercent = 100.0;
-    std::vector<double> edges;
-    float last = shaperGain (acc, 0.0, 1.0, 0.0);
-    for (int i = 1; i < 10000; ++i)
+    // Attack / release are linear ramps inside the opening: full level is
+    // reached after attackMs, held, then released before the closed part.
+    ShaperSettings rp;
+    rp.enabled = true; rp.cuts = 4; rp.attackMs = 10.0; rp.releaseMs = 20.0;  // cut 0.25 s, open 0.125 s
+    CHECK_THAT (shaperGain (rp, 0.005, 1.0, 0.0), Catch::Matchers::WithinAbs (0.5, 1e-6));
+    CHECK (shaperGain (rp, 0.010, 1.0, 0.0) == 1.0f);
+    CHECK (shaperGain (rp, 0.100, 1.0, 0.0) == 1.0f);
+    CHECK_THAT (shaperGain (rp, 0.115, 1.0, 0.0), Catch::Matchers::WithinAbs (0.5, 1e-6));
+    CHECK (shaperGain (rp, 0.125, 1.0, 0.0) == 0.0f);
+    // Opening shorter than attack + release: ramps shrink, the peak still reaches 1.
+    rp.cuts = 200;  // cut 5 ms, open 2.5 ms
+    float peak = 0.0f;
+    for (int i = 0; i < 500; ++i)
+        peak = std::max (peak, shaperGain (rp, i * 0.00001, 1.0, 0.0));
+    CHECK_THAT (peak, Catch::Matchers::WithinAbs (1.0, 0.01));
+
+    // Pattern: '.' mutes whole cuts; lengthMs limits the shaped span.
+    ShaperSettings pt;
+    pt.enabled = true; pt.cuts = 4; pt.pattern = "x.";
+    CHECK (shaperGain (pt, 0.05, 1.0, 0.0) == 1.0f);
+    CHECK (shaperGain (pt, 0.30, 1.0, 0.0) == 0.0f);   // 2nd cut muted (would be open)
+    CHECK (shaperGain (pt, 0.55, 1.0, 0.0) == 1.0f);
+    pt.pattern.clear();
+    pt.lengthMs = 500.0;
+    CHECK (shaperGain (pt, 0.20, 1.0, 0.0) == 0.0f);   // inside the span: closed part of cut 1 of 4 over 0.5 s? (cut = 0.125 s)
+    CHECK (shaperGain (pt, 0.70, 1.0, 0.0) == 1.0f);   // after the span: untouched
+
+    // Distributions: with Accelerating later cuts get shorter, Decelerating longer.
+    auto edgesOf = [] (const ShaperSettings& sh)
     {
-        const float g = shaperGain (acc, i / 10000.0, 1.0, 0.0);
-        if (g != last)
-            edges.push_back (i / 10000.0);
-        last = g;
-    }
-    REQUIRE (edges.size() >= 6);
+        std::vector<double> edges;  // moments where the curve crosses 0.5 upwards
+        float last = shaperGain (sh, 0.0, 1.0, 0.0);
+        for (int i = 1; i < 20000; ++i)
+        {
+            const float g = shaperGain (sh, i / 20000.0, 1.0, 0.0);
+            if (last < 0.5f && g >= 0.5f)
+                edges.push_back (i / 20000.0);
+            last = g;
+        }
+        return edges;
+    };
+    ShaperSettings acc;
+    acc.enabled = true; acc.cuts = 6; acc.accelPercent = 100.0; acc.distribution = ShaperSettings::Distribution::Accelerating;
+    auto edges = edgesOf (acc);
+    REQUIRE (edges.size() == 6);
     for (size_t i = 2; i < edges.size(); ++i)
         CHECK (edges[i] - edges[i - 1] < edges[i - 1] - edges[i - 2]);
+    acc.distribution = ShaperSettings::Distribution::Decelerating;
+    edges = edgesOf (acc);
+    REQUIRE (edges.size() == 6);
+    for (size_t i = 2; i < edges.size(); ++i)
+        CHECK (edges[i] - edges[i - 1] > edges[i - 1] - edges[i - 2]);
+    acc.distribution = ShaperSettings::Distribution::Uniform;
+    edges = edgesOf (acc);
+    REQUIRE (edges.size() == 6);
+    for (size_t i = 2; i < edges.size(); ++i)
+        CHECK_THAT (edges[i] - edges[i - 1], Catch::Matchers::WithinAbs (edges[i - 1] - edges[i - 2], 1e-4));
+
+    // Useful resolution: a cut needs at least attack + release + 1 ms.
+    ShaperSettings res;
+    res.attackMs = 1.0; res.releaseMs = 3.0;
+    CHECK (maxUsefulCuts (res, 1.0) == 200);
+    CHECK (maxUsefulCuts (res, 0.5) == 100);
+    CHECK (maxUsefulCuts (res, 10.0) == limits::maxShaperCuts);
+    CHECK (maxUsefulCuts (res, 0.001) == limits::minShaperCuts);
+}
+
+TEST_CASE ("Volume Shaper: level. Peak is kept and RMS follows the duty cycle; auto level restores it")
+{
+    // Diego's report: with 32 cuts the sound "loses force". Here the peak must stay
+    // within 0.5 dB of the unshaped voice for 8..128 cuts (the old one-pole
+    // smoothing lost 1-2.5 dB at 32 cuts), and the RMS must sit near the value
+    // the 50 % duty cycle predicts (-3 dB): the remaining loss is the silence.
+    const auto sr = GENERATE (44100.0, 48000.0, 96000.0);
+    auto sample = std::make_shared<const SampleBuffer> (tone (sr, 1.0));
+    auto stats = [&] (const Scene& s)
+    {
+        auto plan = buildPlan (s, sample, sr);
+        EchoEngine e;
+        e.prepare (sr);
+        const auto out = run (e, *plan, sr, 256, 1.1, [] (int) { return 120.0; });
+        double peak = 0.0, acc = 0.0;
+        float maxStep = 0.0f;
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            peak = std::max (peak, (double) std::abs (out[i]));
+            acc += (double) out[i] * out[i];
+            if (i > 0)
+                maxStep = std::max (maxStep, std::abs (out[i] - out[i - 1]));
+        }
+        return std::tuple { peak, std::sqrt (acc / (double) out.size()), maxStep };
+    };
+    Scene s;
+    Point p;
+    p.id = "p"; p.number = 1;
+    s.points.push_back (p);
+    const auto [refPeak, refRms, refStep] = stats (s);
+    for (int cuts : { 8, 16, 32, 64, 128 })
+    {
+        s.points[0].shaper = {};
+        s.points[0].shaper.enabled = true;
+        s.points[0].shaper.cuts = cuts;
+        const auto [peak, rms, step] = stats (s);
+        // What the curve itself predicts (mean square over the voice): 50 % duty
+        // = -3 dB; with 64+ cuts the 1+3 ms ramps eat the short openings and the
+        // RMS drops further. The engine must match the curve, nothing more is lost.
+        double ms = 0.0;
+        for (int i = 0; i < 20000; ++i)
+        {
+            const double g = shaperGain (s.points[0].shaper, (i + 0.5) / 20000.0, 1.0, 0.0);
+            ms += g * g;
+        }
+        const double predictedDb = 10.0 * std::log10 (ms / 20000.0);
+        INFO ("cuts " << cuts << " sr " << sr << " predicted " << predictedDb << " dB");
+        CHECK (20.0 * std::log10 (peak / refPeak) > -0.5);
+        CHECK_THAT (20.0 * std::log10 (rms / refRms), Catch::Matchers::WithinAbs (predictedDb, 0.7));
+        if (cuts <= 16)
+            CHECK_THAT (predictedDb, Catch::Matchers::WithinAbs (-3.0, 0.7));  // 32+: the 4 ms of ramps already cost ~0.8 dB
+        CHECK (step < 2.0f * refStep + 0.05f);  // no clicks beyond the tone's own slope
+        s.points[0].shaper.autoLevel = true;
+        const auto [peak2, rms2, step2] = stats (s);
+        CHECK_THAT (20.0 * std::log10 (rms2 / refRms), Catch::Matchers::WithinAbs (std::min (0.0, predictedDb + 6.0), 1.0));
+        CHECK (peak2 <= 1.0);
+        CHECK (shaperLevelGain (s.points[0].shaper, 1.0, 0.125) <= juce::Decibels::decibelsToGain (6.0) + 1e-6f);
+    }
+    // Makeup is bounded: +12 dB total, and the output limiter keeps the sum below 0 dBFS.
+    s.points[0].shaper.autoLevel = true;
+    s.points[0].shaper.makeupDb = 12.0;
+    CHECK (shaperLevelGain (s.points[0].shaper, 1.0, 0.125) <= juce::Decibels::decibelsToGain (12.0) + 1e-6f);
+    // Free time and BPM mode give the same curve in Count mode.
+    s.points[0].shaper.makeupDb = 0.0;
+    s.points[0].shaper.autoLevel = false;
+    const auto [pA, rA, sA] = stats (s);
+    setTimeMode (s, TimeMode::Free, 120.0);
+    const auto [pB, rB, sB] = stats (s);
+    CHECK_THAT (pB, Catch::Matchers::WithinAbs (pA, 1e-4));
+    CHECK_THAT (rB, Catch::Matchers::WithinAbs (rA, 1e-4));
 }
 
 TEST_CASE ("Volume Shaper: square cuts are uniform, tempo-independent in Count mode, no clicks")
@@ -243,7 +365,7 @@ TEST_CASE ("Volume Shaper: square cuts are uniform, tempo-independent in Count m
     p.shaper.cuts = 8;
     p.shaper.depthPercent = 100.0;
     p.shaper.openPercent = 50.0;
-    p.shaper.fadeMs = 2.0;
+    p.shaper.attackMs = 1.0; p.shaper.releaseMs = 2.0;
     s.points.push_back (p);
     auto sample = std::make_shared<const SampleBuffer> (tone (sr, 1.0));
     auto plan = buildPlan (s, sample, sr);
@@ -275,7 +397,7 @@ TEST_CASE ("Volume Shaper: Milliseconds and Division rates")
     p.shaper.rateMode = ShaperSettings::RateMode::Milliseconds;
     p.shaper.periodMs = 100.0;
     p.shaper.depthPercent = 100.0;
-    p.shaper.fadeMs = 1.0;
+    p.shaper.attackMs = 0.5; p.shaper.releaseMs = 1.0;
     s.points.push_back (p);
     auto sample = std::make_shared<const SampleBuffer> (tone (sr, 1.0));
     {
@@ -301,7 +423,7 @@ TEST_CASE ("Volume Shaper: Milliseconds and Division rates")
 TEST_CASE ("Volume Shaper presets exist and are valid")
 {
     const auto& presets = shaperPresets();
-    REQUIRE (presets.size() == 5);
+    REQUIRE (presets.size() == 11);
     for (auto& pr : presets)
     {
         CHECK (pr.settings.enabled);

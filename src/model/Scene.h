@@ -80,9 +80,10 @@ namespace limits
     inline constexpr double minCoord = 0.0, maxCoord = 100.0;
     inline constexpr double minBeat = 0.0, maxBeat = 1024.0;
     inline constexpr double minSeconds = 0.0, maxSeconds = 600.0;
-    inline constexpr int minShaperCuts = 2, maxShaperCuts = 32;
-    inline constexpr double minShaperPeriodMs = 10.0, maxShaperPeriodMs = 4000.0;
-    inline constexpr double maxShaperFadeMs = 50.0;
+    inline constexpr int minShaperCuts = 2, maxShaperCuts = 256;
+    inline constexpr double minShaperPeriodMs = 5.0, maxShaperPeriodMs = 4000.0;
+    inline constexpr double minShaperRampMs = 0.1, maxShaperAttackMs = 50.0, maxShaperReleaseMs = 200.0;
+    inline constexpr double maxShaperMakeupDb = 12.0, maxShaperAutoLevelDb = 6.0;
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
     inline constexpr double minCharacter = 0.0, maxCharacter = 100.0;
     inline constexpr double minSpeed = 50.0, maxSpeed = 200.0;
@@ -133,26 +134,35 @@ std::optional<StutterSettings::Region> stutterRegionFromString (const juce::Stri
 StutterSettings clamped (StutterSettings);
 
 // Volume Shaper: a periodic volume curve (like a drawn FL Studio automation)
-// applied on top of the repetition, independent of Stutter. Count mode spaces
-// `cuts` cuts evenly over the region (tempo-independent); Milliseconds and
-// Division modes use a fixed period.
+// applied on top of the repetition, independent of Stutter (which repeats
+// audio; this only modulates amplitude). Count mode places `cuts` cuts over
+// the shaped span (tempo-independent); Milliseconds and Division modes use a
+// fixed period. Every edge is a linear attack/release ramp in ms, so the open
+// part keeps full level (no smoothing filter).
 struct ShaperSettings
 {
     enum class Shape { Square, Triangle, Saw };
     enum class RateMode { Count, Milliseconds, Division };
+    enum class Distribution { Uniform, Accelerating, Decelerating };
 
     bool enabled = false;
     Shape shape = Shape::Square;
     RateMode rateMode = RateMode::Count;
-    int cuts = 8;                       // Count mode: 2..32 cuts over the region
+    int cuts = 8;                       // Count mode: 2..256 cuts over the span
     double periodMs = 125.0;            // Milliseconds mode: 10..4000
     StutterSettings::Division division = StutterSettings::Division::Sixteenth;  // Division mode
+    Distribution distribution = Distribution::Uniform;  // Count mode only
+    double accelPercent = 0.0;          // 0..100: strength of the acceleration / deceleration
+    juce::String pattern;               // per cut: 'x' open, '.' muted, repeats; empty = all open
     double depthPercent = 100.0;        // 0..100: how far the closed part drops
-    double openPercent = 50.0;          // 5..95: part of each period that stays open (square)
-    double fadeMs = 3.0;                // 0..50: anticlick smoothing of the edges
-    double accelPercent = 0.0;          // 0..100: Count mode only, later cuts get shorter
+    double openPercent = 50.0;          // 5..95: part of each cut that stays open (square)
+    double attackMs = 1.0;              // 0.1..50: ramp up at the start of each opening
+    double releaseMs = 3.0;             // 0.1..200: ramp down after each opening
     bool wholeVoice = true;             // false = only regionStart..regionEnd (fractions of the repetition)
     double regionStart = 0.0, regionEnd = 1.0;
+    double lengthMs = 0.0;              // 0 = to the end of the region; else the shaped span lasts this long
+    double makeupDb = 0.0;              // -12..+12 after the curve (limiter still protects the output)
+    bool autoLevel = false;             // compensates the RMS lost to the closed parts (at most +6 dB)
     bool operator== (const ShaperSettings&) const = default;
 };
 
@@ -160,7 +170,13 @@ juce::String toString (ShaperSettings::Shape);
 std::optional<ShaperSettings::Shape> shaperShapeFromString (const juce::String&);
 juce::String toString (ShaperSettings::RateMode);
 std::optional<ShaperSettings::RateMode> shaperRateModeFromString (const juce::String&);
+juce::String toString (ShaperSettings::Distribution);
+std::optional<ShaperSettings::Distribution> shaperDistributionFromString (const juce::String&);
 ShaperSettings clamped (ShaperSettings);
+// Shortest cut (seconds) the curve can represent usefully: attack + release + 1 ms.
+double minimumCutSeconds (const ShaperSettings&);
+// Largest cut count that keeps every cut at least minimumCutSeconds over a span of `spanSeconds`.
+int maxUsefulCuts (const ShaperSettings&, double spanSeconds);
 
 struct ShaperPreset
 {

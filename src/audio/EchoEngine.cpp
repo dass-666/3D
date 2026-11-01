@@ -70,63 +70,164 @@ int centsFor (double semitones) noexcept
     return (int) std::lround (std::clamp (semitones, limits::minPitch, limits::maxPitch) * 100.0);
 }
 
-float shaperGain (const ShaperSettings& sh, double t, double length, double divisionSeconds) noexcept
+namespace
+{
+// Count mode: maps a uniform cut position u (0..1) to time x (0..1) and back.
+// Accelerating: later cuts shorter. Decelerating: later cuts longer. p >= 1.
+double shaperWarp (ShaperSettings::Distribution d, double u, double p) noexcept
+{
+    switch (d)
+    {
+        case ShaperSettings::Distribution::Accelerating: return 1.0 - std::pow (std::max (0.0, 1.0 - u), p);
+        case ShaperSettings::Distribution::Decelerating: return std::pow (std::max (0.0, u), p);
+        default: return u;
+    }
+}
+double shaperUnwarp (ShaperSettings::Distribution d, double x, double p) noexcept
+{
+    switch (d)
+    {
+        case ShaperSettings::Distribution::Accelerating: return 1.0 - std::pow (std::max (0.0, 1.0 - x), 1.0 / p);
+        case ShaperSettings::Distribution::Decelerating: return std::pow (std::max (0.0, x), 1.0 / p);
+        default: return x;
+    }
+}
+}  // namespace
+
+bool shaperSpan (const ShaperSettings& sh, double length, double& start, double& end) noexcept
 {
     if (! sh.enabled || length <= 0.0)
-        return 1.0f;
-    double start = 0.0, end = length;
+        return false;
+    start = 0.0;
+    end = length;
     if (! sh.wholeVoice)
     {
         start = sh.regionStart * length;
         end = sh.regionEnd * length;
     }
-    if (t < start || t >= end || end <= start)
+    if (sh.lengthMs > 0.0)
+        end = std::min (end, start + sh.lengthMs * 0.001);
+    return end > start;
+}
+
+float shaperGain (const ShaperSettings& sh, double t, double length, double divisionSeconds) noexcept
+{
+    double start = 0.0, end = 0.0;
+    if (! shaperSpan (sh, length, start, end) || t < start || t >= end)
         return 1.0f;
 
     const double span = end - start;
-    const double x = (t - start) / span;  // 0..1 across the shaped region
-    double phase;                          // 0..1 inside the current cut
+    const double local = t - start;  // seconds into the shaped span
+    int cut = 0;
+    double cutStart = 0.0, cutEnd = span;
     switch (sh.rateMode)
     {
         case ShaperSettings::RateMode::Count:
         {
-            // Acceleration warps time so later cuts are shorter, cuts stay uniform in u.
-            const double pw = 1.0 + 3.0 * sh.accelPercent / 100.0;
-            const double u = sh.accelPercent > 0.0 ? 1.0 - std::pow (std::max (0.0, 1.0 - x), 1.0 / pw) : x;
-            const double c = u * sh.cuts;
-            phase = c - std::floor (c);
+            const int n = std::max (2, sh.cuts);
+            const double p = 1.0 + 3.0 * std::clamp (sh.accelPercent, 0.0, 100.0) / 100.0;
+            const double u = shaperUnwarp (sh.distribution, local / span, p);
+            cut = std::clamp ((int) std::floor (u * n), 0, n - 1);
+            cutStart = shaperWarp (sh.distribution, (double) cut / n, p) * span;
+            cutEnd = shaperWarp (sh.distribution, (double) (cut + 1) / n, p) * span;
             break;
         }
         case ShaperSettings::RateMode::Milliseconds:
-        {
-            const double c = (t - start) / (sh.periodMs / 1000.0);
-            phase = c - std::floor (c);
-            break;
-        }
         case ShaperSettings::RateMode::Division:
         default:
         {
-            const double period = std::max (1.0e-3, divisionSeconds);
-            const double c = (t - start) / period;
-            phase = c - std::floor (c);
+            const double period = sh.rateMode == ShaperSettings::RateMode::Milliseconds
+                                      ? std::max (1.0e-3, sh.periodMs / 1000.0)
+                                      : std::max (1.0e-3, divisionSeconds);
+            cut = (int) std::floor (local / period);
+            cutStart = cut * period;
+            cutEnd = std::min (span, cutStart + period);
             break;
         }
     }
+    const double cutLen = std::max (1.0e-6, cutEnd - cutStart);
+    const double x = std::clamp (local - cutStart, 0.0, cutLen);  // seconds into the cut
+    const double phase = x / cutLen;
 
-    const double depth = sh.depthPercent / 100.0;
-    switch (sh.shape)
+    // Pattern: 'x' open, '.' muted, repeating over the cuts.
+    bool muted = false;
+    if (const int n = sh.pattern.length(); n > 0)
+        muted = sh.pattern[cut % n] == '.';
+
+    const double attack = std::max (1.0e-5, sh.attackMs * 0.001);
+    const double release = std::max (1.0e-5, sh.releaseMs * 0.001);
+    double shape = 0.0;  // 0 = closed, 1 = fully open
+    if (! muted)
     {
-        case ShaperSettings::Shape::Square:
-            return phase < sh.openPercent / 100.0 ? 1.0f : (float) (1.0 - depth);
-        case ShaperSettings::Shape::Triangle:
+        switch (sh.shape)
         {
-            const double tri = phase < 0.5 ? 2.0 * phase : 2.0 - 2.0 * phase;  // 0 at the edges, 1 in the middle
-            return (float) (1.0 - depth * (1.0 - tri));
+            case ShaperSettings::Shape::Square:
+            {
+                // Open part with linear attack and release ramps inside it. When the
+                // opening is shorter than attack + release, both shrink proportionally
+                // so the ramps still meet (the cut is then just a short blip).
+                const double openLen = cutLen * std::clamp (sh.openPercent, 1.0, 100.0) / 100.0;
+                double a = attack, r = release;
+                if (a + r > openLen)
+                {
+                    const double k = openLen / (a + r);
+                    a *= k;
+                    r *= k;
+                }
+                if (x >= openLen)            shape = 0.0;
+                else if (x < a)              shape = x / a;
+                else if (x > openLen - r)    shape = (openLen - x) / r;
+                else                         shape = 1.0;
+                break;
+            }
+            case ShaperSettings::Shape::Triangle:
+                shape = phase < 0.5 ? 2.0 * phase : 2.0 - 2.0 * phase;  // 0 at the edges, 1 in the middle
+                break;
+            case ShaperSettings::Shape::Saw:
+            default:
+            {
+                const double a = std::min (attack, 0.5 * cutLen);
+                shape = (1.0 - phase) * std::min (1.0, x / a);  // ramps up, then decays to 0
+                break;
+            }
         }
-        case ShaperSettings::Shape::Saw:
-        default:
-            return (float) (1.0 - depth * phase);
     }
+
+    const double depth = std::clamp (sh.depthPercent, 0.0, 100.0) / 100.0;
+    double g = 1.0 - depth * (1.0 - shape);
+    // A span that does not cover the whole voice meets unity gain at its
+    // edges: ramp away from 1 at the start and back to 1 at the end.
+    if (! sh.wholeVoice || sh.lengthMs > 0.0)
+    {
+        if (local < attack)       g = std::max (g, 1.0 - local / attack);
+        if (end - t < release)    g = std::max (g, 1.0 - (end - t) / release);
+    }
+    return (float) g;
+}
+
+float shaperLevelGain (const ShaperSettings& sh, double voiceSeconds, double divisionSeconds)
+{
+    if (! sh.enabled)
+        return 1.0f;
+    double gain = juce::Decibels::decibelsToGain (std::clamp (sh.makeupDb, -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb));
+    if (sh.autoLevel && voiceSeconds > 0.0)
+    {
+        // Mean square of the curve over the whole voice (numeric, 4096 steps):
+        // the RMS the closed parts remove is restored, up to +6 dB.
+        constexpr int steps = 4096;
+        double ms = 0.0;
+        for (int i = 0; i < steps; ++i)
+        {
+            const double g = shaperGain (sh, (i + 0.5) / steps * voiceSeconds, voiceSeconds, divisionSeconds);
+            ms += g * g;
+        }
+        ms /= steps;
+        const double maxAuto = juce::Decibels::decibelsToGain (limits::maxShaperAutoLevelDb);
+        gain *= ms > 1.0e-6 ? std::min (maxAuto, 1.0 / std::sqrt (ms)) : maxAuto;
+    }
+    // Never more than +12 dB in total: the limiter protects the output, but a
+    // curve must not become a dangerous amplifier.
+    return (float) std::min (gain, juce::Decibels::decibelsToGain (limits::maxShaperMakeupDb));
 }
 
 SharedSample renderSample (const SourceRef& ref, const DecodedAudio* source, double hostSampleRate)
@@ -192,6 +293,11 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
         const auto region = clamped (p.region);
         const auto playStart = std::clamp<juce::int64> ((juce::int64) std::llround (region.start * (double) len), 0, len);
         const auto playEnd = std::clamp<juce::int64> ((juce::int64) std::llround (region.end * (double) len), playStart, len);
+        // Makeup / auto level of the curve. Division mode and stutter slices depend
+        // on the tempo in force, unknown here: 120 BPM and the full region are used
+        // (the duty cycle of a square curve barely depends on either).
+        const float shaperLevel = shaperLevelGain (shaper, (double) (playEnd - playStart) / hostSampleRate,
+                                                   beatsPerDivision (shaper.division) * 0.5);
 
         if (! p.stutter.enabled)
         {
@@ -207,6 +313,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.regionEnd = playEnd;
             e.placement = placementFor (p, hostSampleRate);
             e.shaper = shaper;
+            e.shaperLevel = shaperLevel;
             e.effects = effects;
             e.highpassCoef = highpassCoef;
             plan->echoes.push_back (std::move (e));
@@ -240,6 +347,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.freeTime = freeTime;
             e.seconds = timing.seconds;
             e.shaper = shaper;
+            e.shaperLevel = shaperLevel;
             e.effects = effects;
             e.highpassCoef = highpassCoef;
             e.sample = sample;
@@ -356,7 +464,6 @@ bool EchoEngine::startVoice (const PlannedEcho& echo, int offset, juce::AudioBuf
     v.gainL = echo.placement.gainL;
     v.gainR = echo.placement.gainR;
     v.coef = echo.placement.lowpassCoef;
-    v.shaperEnv = 1.0f;
     v.hpCoef = echo.highpassCoef;
     v.reverse = echo.effects.reverse;
     *slot = v;
@@ -396,16 +503,15 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
     const float dR = (target.gainR - v.gainR) / span;
     const float dC = (target.lowpassCoef - v.coef) / span;
 
-    // Volume Shaper: evaluated per sample from the voice's own clock, then
-    // smoothed (one-pole, fadeMs) so every edge is a short fade, never a step.
+    // Volume Shaper: evaluated per sample from the voice's own clock. The curve
+    // carries its own attack/release ramps, so no extra smoothing is applied
+    // (a one-pole here never reached full level inside short openings).
     const ShaperSettings* shaper = (echo != nullptr && echo->shaper.enabled) ? &echo->shaper : nullptr;
     const double voiceLength = (double) (length - v.start) / sampleRate;
     const double divisionSeconds = shaper != nullptr && beatsPerSample > 0.0
                                        ? beatsPerDivision (shaper->division) / beatsPerSample / sampleRate
                                        : 0.0;
-    const float shaperCoef = shaper != nullptr && shaper->fadeMs > 0.0
-                                 ? (float) (1.0 - std::exp (-1.0 / (shaper->fadeMs * 0.001 * sampleRate)))
-                                 : 1.0f;
+    const float shaperLevel = echo != nullptr ? echo->shaperLevel : 1.0f;
     // Point fades (ms), on top of the anticlick fades. Reverse reads the region backwards.
     const float fadeInDen = echo != nullptr ? (float) std::max (1.0, echo->effects.fadeInMs * 0.001 * sampleRate) : 1.0f;
     const float fadeOutDen = echo != nullptr ? (float) std::max (1.0, echo->effects.fadeOutMs * 0.001 * sampleRate) : 1.0f;
@@ -431,9 +537,7 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
                    * std::min (1.0f, (float) (length - v.position) / fadeOutDen);
         if (shaper != nullptr)
         {
-            const float g = shaperGain (*shaper, (double) (v.position - v.start) / sampleRate, voiceLength, divisionSeconds);
-            v.shaperEnv += (g - v.shaperEnv) * shaperCoef;
-            env *= v.shaperEnv;
+            env *= shaperLevel * shaperGain (*shaper, (double) (v.position - v.start) / sampleRate, voiceLength, divisionSeconds);
         }
         const auto idx = (int) (v.reverse ? v.start + (length - 1) - (v.position - v.start) : v.position);
 
