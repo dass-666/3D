@@ -666,15 +666,30 @@ void CurveEditor::paint (juce::Graphics& g)
     const auto& snapH = ctx.processor.getHostSnapshot();
     const double bpm = snapH.hasBpm.load() ? snapH.bpm.load() : 120.0;
     const double divisionSeconds = beatsPerDivision (sh->division) * 60.0 / bpm;
+    // Beat grid (1/16 of the host tempo) when the host reports one: faint violet ticks under the ms ruler.
+    if (snapH.hasBpm.load())
+    {
+        const double step = 60.0 / bpm / 4.0;
+        const double first = std::ceil (viewStart * len / step) * step;
+        g.setColour (theme::violet.withAlpha (0.25f));
+        for (double t = first; t <= viewEnd * len; t += step)
+            g.drawVerticalLine ((int) xForFraction (t / len), ruler.getBottom() - 3.0f, c.getY() + 4.0f);
+    }
     const float mid = c.getCentreY();
     const float half = c.getHeight() * 0.42f;
     juce::Path curve;
     const int w = (int) c.getWidth();
+    const float stripY = c.getBottom() - 4.0f;  // audible (turquoise) / silent (dark) strip
     for (int px = 0; px <= w; ++px)
     {
         const double f = viewStart + (viewEnd - viewStart) * px / juce::jmax (1, w);
         const float gN = sh->enabled ? shaperGain (*sh, juce::jmin (f * len, len * 0.999999), len, divisionSeconds) : 1.0f;
         const float x = c.getX() + (float) px;
+        if (px < w)
+        {
+            g.setColour (gN >= 0.5f ? theme::turquoise.withAlpha (0.8f) : theme::background.brighter (0.15f));
+            g.drawVerticalLine ((int) x, stripY, c.getBottom());
+        }
         if (px < w && px < (int) peaks.size())
         {
             const auto [lo, hi] = peaks[(size_t) px];

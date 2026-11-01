@@ -317,3 +317,122 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
     q.setStateInformation (state.getData(), (int) state.getSize());
     CHECK (q.getSceneForUi() == p.getSceneForUi());
 }
+
+TEST_CASE ("Pro layout: quick controls edit the generator, «Generar cortes perfectos», sections, navigation, mode switch")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.editScene ([] (Scene& s) { addPoint (s, { 50.0, 50.0 }); addPoint (s, { 30.0, 50.0 }); addPoint (s, { 70.0, 50.0 }); });
+    p.setUiMode (UiMode::Pro);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1240, 840);
+    auto& ctx = ed.getContext();
+    auto& sb = ed.getSidebar();
+    auto& ce = ed.getCurveEditor();
+    const auto id0 = ctx.scene().points[0].id;
+    ctx.select (id0, false);
+
+    // Velocidad = cuts of the generator; Intensidad = depth; the shaper turns on.
+    sb.velocidad().setValue (24.0, juce::sendNotificationSync);
+    sb.intensidad().setValue (60.0, juce::sendNotificationSync);
+    {
+        const auto& sh = ctx.scene().points[0].shaper;
+        CHECK (sh.enabled);
+        CHECK (sh.cuts == 24);
+        CHECK (sh.rateMode == ShaperSettings::RateMode::Count);
+        CHECK_THAT (sh.depthPercent, Catch::Matchers::WithinAbs (60.0, 1e-9));
+    }
+    // Mezcla is the plugin's mix parameter.
+    sb.mezcla().setValue (35.0, juce::sendNotificationSync);
+    CHECK_THAT (p.getParameters().getRawParameterValue ("mix")->load(), Catch::Matchers::WithinAbs (35.0f, 0.01f));
+
+    // Unrelated advanced settings survive a quick control move.
+    ctx.edit ([&] (Scene& s) { auto* pt = findPoint (s, id0); pt->shaper.attackMs = 7.0; pt->effects.reverb.enabled = true; pt->shaper.pattern = "x.x"; });
+    sb.velocidad().setValue (12.0, juce::sendNotificationSync);
+    {
+        const auto& pt = ctx.scene().points[0];
+        CHECK (pt.shaper.cuts == 12);
+        CHECK_THAT (pt.shaper.attackMs, Catch::Matchers::WithinAbs (7.0, 1e-9));
+        CHECK (pt.shaper.pattern == "x.x");
+        CHECK (pt.effects.reverb.enabled);
+    }
+
+    // A manual curve: Velocidad returns to the generator, the manual points stay stored.
+    ce.setManual (true);
+    REQUIRE (ctx.scene().points[0].shaper.custom);
+    const auto manualPoints = ctx.scene().points[0].shaper.curve;
+    REQUIRE (manualPoints.size() >= 2);
+    sb.velocidad().setValue (16.0, juce::sendNotificationSync);
+    CHECK (! ctx.scene().points[0].shaper.custom);
+    CHECK (ctx.scene().points[0].shaper.curve == manualPoints);
+    CHECK (ctx.scene().points[0].shaper.cuts == 16);
+
+    // «Generar cortes perfectos» inside a selection: region = selection, generator on,
+    // the count is limited to what the ramps allow, and what is drawn is shaperGain.
+    ce.setManual (true);
+    ce.setSelection (std::pair { 0.25, 0.5 });
+    sb.velocidad().setValue (256.0, juce::sendNotificationSync);
+    ce.setSelection (std::pair { 0.25, 0.5 });
+    ce.generatePerfectCuts();
+    {
+        const auto& sh = ctx.scene().points[0].shaper;
+        CHECK (sh.enabled);
+        CHECK (! sh.custom);
+        CHECK (! sh.wholeVoice);
+        CHECK_THAT (sh.regionStart, Catch::Matchers::WithinAbs (0.25, 1e-9));
+        CHECK_THAT (sh.regionEnd, Catch::Matchers::WithinAbs (0.5, 1e-9));
+        const double span = (sh.regionEnd - sh.regionStart) * ce.voiceSeconds();
+        CHECK (sh.cuts <= maxUsefulCuts (sh, span));
+        CHECK (sh.cuts >= 2);
+        // Outside the region the curve is 1; inside, the closed parts drop.
+        const double len = ce.voiceSeconds();
+        CHECK_THAT (shaperGain (sh, 0.1 * len, len, 0.125), Catch::Matchers::WithinAbs (1.0, 1e-6));
+        float minInside = 1.0f;
+        for (double t = 0.25 * len; t < 0.5 * len; t += 0.0005)
+            minInside = juce::jmin (minInside, shaperGain (sh, t, len, 0.125));
+        CHECK (minInside < 0.5f);
+    }
+    // Multiple selection: the quick control edits every selected repetition.
+    ctx.select (ctx.scene().points[1].id, true);
+    sb.intensidad().setValue (40.0, juce::sendNotificationSync);
+    CHECK_THAT (ctx.scene().points[0].shaper.depthPercent, Catch::Matchers::WithinAbs (40.0, 1e-9));
+    CHECK_THAT (ctx.scene().points[1].shaper.depthPercent, Catch::Matchers::WithinAbs (40.0, 1e-9));
+    CHECK_THAT (ctx.scene().points[2].shaper.depthPercent, Catch::Matchers::WithinAbs (100.0, 1e-9));
+
+    // Creative preset prev/next on the selection, recorded for the preset card and saved.
+    ctx.select (id0, false);
+    sb.stepPreset (+1);
+    CHECK (ctx.scene().points[0].creativePreset == pointPresets()[0].id);
+    sb.stepPreset (-1);
+    CHECK (ctx.scene().points[0].creativePreset == pointPresets().back().id);
+
+    // Sections: a category opens its section and shows its controls; the centre tabs switch views.
+    ed.getPointPanel().showSection ("reverb");
+    sb.onCategory ("space");
+    CHECK (ed.getCenterView() == SpatialEchoEditor::CenterView::Map);
+    CHECK (ed.getMap().isVisible());
+    CHECK (! ce.isVisible());
+    sb.onCategory ("shaper");
+    CHECK (ed.getCenterView() == SpatialEchoEditor::CenterView::Cuts);
+    CHECK (ce.isVisible());
+    ed.setCenterView (SpatialEchoEditor::CenterView::Audio);
+    CHECK (ed.getWaveform().isVisible());
+    CHECK (! ce.isVisible());
+    ed.setCenterView (SpatialEchoEditor::CenterView::Cuts);
+
+    // Switching modes changes nothing in the scene; the state round-trips with the preset id.
+    const auto before = p.getSceneForUi();
+    ed.setSize (1080, 790);
+    ed.setSize (1240, 840);
+    juce::MemoryBlock state;
+    p.getStateInformation (state);
+    SpatialEchoProcessor q;
+    q.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (q.getSceneForUi() == before);
+    CHECK (q.getSceneForUi().points[0].creativePreset == before.points[0].creativePreset);
+    CHECK (p.getSceneForUi() == before);
+    snapshot (ed, "ui-pro-cuts.png");
+}
