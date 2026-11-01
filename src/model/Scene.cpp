@@ -321,6 +321,25 @@ bool setShaper (Scene& scene, const juce::String& id, ShaperSettings sh)
     return false;
 }
 
+PointEffects clamped (PointEffects e)
+{
+    e.fadeInMs = std::clamp (e.fadeInMs, 0.0, 2000.0);
+    e.fadeOutMs = std::clamp (e.fadeOutMs, 0.0, 2000.0);
+    e.lowpassHz = std::clamp (e.lowpassHz, 200.0, 20000.0);
+    e.highpassHz = std::clamp (e.highpassHz, 20.0, 5000.0);
+    return e;
+}
+
+bool setEffects (Scene& scene, const juce::String& id, PointEffects e)
+{
+    if (auto* p = findPoint (scene, id))
+    {
+        p->effects = clamped (e);
+        return true;
+    }
+    return false;
+}
+
 bool setRegion (Scene& scene, const juce::String& id, PlayRegion r)
 {
     if (auto* p = findPoint (scene, id))

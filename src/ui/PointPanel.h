@@ -55,6 +55,11 @@ private:
     juce::Label regionL, divisionL, repeatsL, sliceLengthL, offsetL, stutterGainL, manualStartL, manualEndL;
     juce::TextButton copyButton { "Copiar Stutter" }, pasteButton { "Pegar Stutter" };
 
+    // Effects with real processing
+    juce::Label effectsTitle, effectsNote, fadeInL, fadeOutL, lowpassL, highpassL;
+    juce::Slider fadeIn, fadeOut, lowpass, highpass;
+    juce::ToggleButton reverseToggle { juce::String::fromUTF8 ("Reverse (al rev\xc3\xa9s)") };
+
     // Volume Shaper
     juce::Label shaperTitle, shaperNote;
     juce::ToggleButton shaperToggle { "Activar" }, shaperWholeToggle { juce::String::fromUTF8 ("Toda la repetici\xc3\xb3n") };

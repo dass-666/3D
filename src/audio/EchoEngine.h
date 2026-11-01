@@ -35,6 +35,7 @@ struct Placement
 };
 
 Placement placementFor (const Point&, double sampleRate, double extraGainDb = 0.0);
+float onePoleCoef (double cutoffHz, double sampleRate) noexcept;  // 1 = no filtering
 
 struct PlannedEcho
 {
@@ -56,6 +57,8 @@ struct PlannedEcho
     bool alignEnd = false;
     Placement placement;
     ShaperSettings shaper;   // volume curve on top (enabled or not)
+    PointEffects effects;
+    float highpassCoef = 0.0f;  // one-pole, 0 = off
 };
 
 // Volume Shaper evaluation (pure; shared by the engine and the UI preview).
@@ -186,6 +189,9 @@ private:
         int index = 0;
         float gainL = 0.0f, gainR = 0.0f, coef = 1.0f;
         float z[2] {};                 // lowpass state
+        float hz[2] {};                // highpass state (tracks the low part to subtract)
+        float hpCoef = 0.0f;
+        bool reverse = false;
         float release = 1.0f;          // < 1 while fading out
         bool releasing = false;
         float shaperEnv = 1.0f;        // smoothed Volume Shaper gain

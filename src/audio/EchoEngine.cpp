@@ -6,6 +6,13 @@
 namespace ses
 {
 
+float onePoleCoef (double cutoffHz, double sampleRate) noexcept
+{
+    return cutoffHz >= std::min (18000.0, 0.45 * sampleRate)
+               ? 1.0f
+               : (float) (1.0 - std::exp (-2.0 * juce::MathConstants<double>::pi * cutoffHz / sampleRate));
+}
+
 Placement placementFor (const Point& p, double sampleRate, double extraGainDb)
 {
     const auto pos = clamped (p.position);
@@ -23,13 +30,12 @@ Placement placementFor (const Point& p, double sampleRate, double extraGainDb)
     const double gainDb = std::clamp (p.gainDb + extraGainDb, limits::minGainDb, limits::maxGainDb);
     const double level = juce::Decibels::decibelsToGain (gainDb) * (1.0 - 0.45 * depth);
     double cutoff = 20000.0 * std::pow (0.2, depth) * (behind ? 1.0 - 0.35 * depth : 1.0);
+    cutoff = std::min (cutoff, clamped (p.effects).lowpassHz);  // point low-pass effect
 
     Placement out;
     out.gainL = (float) (level * l);
     out.gainR = (float) (level * r);
-    out.lowpassCoef = cutoff >= std::min (18000.0, 0.45 * sampleRate)
-                          ? 1.0f
-                          : (float) (1.0 - std::exp (-2.0 * juce::MathConstants<double>::pi * cutoff / sampleRate));
+    out.lowpassCoef = onePoleCoef (cutoff, sampleRate);
     return out;
 }
 
@@ -179,6 +185,8 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
         const double pointBeat = freeTime ? 0.0 : timing.beat;
         const auto len = sample != nullptr ? (juce::int64) sample->getNumSamples() : length;
         const auto shaper = clamped (p.shaper);
+        const auto effects = clamped (p.effects);
+        const float highpassCoef = effects.highpassHz > 20.0 ? onePoleCoef (effects.highpassHz, hostSampleRate) : 0.0f;
 
         // The part of the fragment this repetition plays.
         const auto region = clamped (p.region);
@@ -199,6 +207,8 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.regionEnd = playEnd;
             e.placement = placementFor (p, hostSampleRate);
             e.shaper = shaper;
+            e.effects = effects;
+            e.highpassCoef = highpassCoef;
             plan->echoes.push_back (std::move (e));
             continue;
         }
@@ -230,6 +240,8 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.freeTime = freeTime;
             e.seconds = timing.seconds;
             e.shaper = shaper;
+            e.effects = effects;
+            e.highpassCoef = highpassCoef;
             e.sample = sample;
             e.pitchPending = pitchPending;
             e.regionStart = regionStart;
@@ -345,6 +357,8 @@ bool EchoEngine::startVoice (const PlannedEcho& echo, int offset, juce::AudioBuf
     v.gainR = echo.placement.gainR;
     v.coef = echo.placement.lowpassCoef;
     v.shaperEnv = 1.0f;
+    v.hpCoef = echo.highpassCoef;
+    v.reverse = echo.effects.reverse;
     *slot = v;
     renderVoice (*slot, buffer, offset, buffer.getNumSamples(), plan, beatsPerSample);
     return true;
@@ -392,6 +406,11 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
     const float shaperCoef = shaper != nullptr && shaper->fadeMs > 0.0
                                  ? (float) (1.0 - std::exp (-1.0 / (shaper->fadeMs * 0.001 * sampleRate)))
                                  : 1.0f;
+    // Point fades (ms), on top of the anticlick fades. Reverse reads the region backwards.
+    const float fadeInDen = echo != nullptr ? (float) std::max (1.0, echo->effects.fadeInMs * 0.001 * sampleRate) : 1.0f;
+    const float fadeOutDen = echo != nullptr ? (float) std::max (1.0, echo->effects.fadeOutMs * 0.001 * sampleRate) : 1.0f;
+    const bool hasFades = echo != nullptr && (echo->effects.fadeInMs > 0.0 || echo->effects.fadeOutMs > 0.0);
+    const bool hp = v.hpCoef > 0.0f;
 
     for (int i = start; i < end; ++i, ++v.position)
     {
@@ -407,22 +426,35 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
         if (v.releasing)
             v.release -= releaseStep;
         float env = (wetA + wetStep * (float) i) * std::min (fadeIn, fadeOut) * std::max (0.0f, v.release);
+        if (hasFades)
+            env *= std::min (1.0f, (float) (v.position - v.start + 1) / fadeInDen)
+                   * std::min (1.0f, (float) (length - v.position) / fadeOutDen);
         if (shaper != nullptr)
         {
             const float g = shaperGain (*shaper, (double) (v.position - v.start) / sampleRate, voiceLength, divisionSeconds);
             v.shaperEnv += (g - v.shaperEnv) * shaperCoef;
             env *= v.shaperEnv;
         }
-        const auto idx = (int) v.position;
+        const auto idx = (int) (v.reverse ? v.start + (length - 1) - (v.position - v.start) : v.position);
 
         v.gainL += dL;
         v.gainR += dR;
         v.coef += dC;
 
         const float a = v.coef;
+        auto in = [&] (int ch) noexcept
+        {
+            float x = s.getSample (ch, idx);
+            if (hp)
+            {
+                v.hz[ch] += v.hpCoef * (x - v.hz[ch]);
+                x -= v.hz[ch];
+            }
+            return x;
+        };
         if (inChannels == 1)
         {
-            v.z[0] += a * (s.getSample (0, idx) - v.z[0]);
+            v.z[0] += a * (in (0) - v.z[0]);
             const float x = v.z[0] * env;
             if (outChannels == 1)
                 buffer.addSample (0, i, x * 0.5f * (v.gainL + v.gainR));
@@ -434,8 +466,8 @@ void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int st
         }
         else
         {
-            v.z[0] += a * (s.getSample (0, idx) - v.z[0]);
-            v.z[1] += a * (s.getSample (1, idx) - v.z[1]);
+            v.z[0] += a * (in (0) - v.z[0]);
+            v.z[1] += a * (in (1) - v.z[1]);
             if (outChannels == 1)
                 buffer.addSample (0, i, 0.5f * (v.z[0] + v.z[1]) * env * 0.5f * (v.gainL + v.gainR));
             else

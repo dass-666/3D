@@ -177,6 +177,32 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     stutterNote.setColour (juce::Label::textColourId, theme::textFaint);
     content.addAndMakeVisible (stutterNote);
 
+    // ---- Effects (real processing only)
+    effectsTitle.setText (u8 ("EFECTOS DE LA REPETICI\xc3\x93N"), juce::dontSendNotification);
+    effectsTitle.setFont (theme::font (11.5f, true));
+    effectsTitle.setColour (juce::Label::textColourId, theme::textDim);
+    content.addAndMakeVisible (effectsTitle);
+    setupSlider (fadeIn, fadeInL, "Fade in", 0, 2000, 1, " ms");
+    setupSlider (fadeOut, fadeOutL, "Fade out", 0, 2000, 1, " ms");
+    setupSlider (lowpass, lowpassL, "Paso bajo", 200, 20000, 1, " Hz");
+    setupSlider (highpass, highpassL, "Paso alto", 20, 5000, 1, " Hz");
+    fadeIn.setSkewFactorFromMidPoint (300.0);
+    fadeOut.setSkewFactorFromMidPoint (300.0);
+    lowpass.setSkewFactorFromMidPoint (2000.0);
+    highpass.setSkewFactorFromMidPoint (300.0);
+    lowpass.setDoubleClickReturnValue (true, 20000.0);
+    highpass.setDoubleClickReturnValue (true, 20.0);
+    fadeIn.onValueChange = [this] { editPrimary ([v = fadeIn.getValue()] (Scene& s, Point& p) { auto e = p.effects; e.fadeInMs = v; setEffects (s, p.id, e); }); };
+    fadeOut.onValueChange = [this] { editPrimary ([v = fadeOut.getValue()] (Scene& s, Point& p) { auto e = p.effects; e.fadeOutMs = v; setEffects (s, p.id, e); }); };
+    lowpass.onValueChange = [this] { editPrimary ([v = lowpass.getValue()] (Scene& s, Point& p) { auto e = p.effects; e.lowpassHz = v; setEffects (s, p.id, e); }); };
+    highpass.onValueChange = [this] { editPrimary ([v = highpass.getValue()] (Scene& s, Point& p) { auto e = p.effects; e.highpassHz = v; setEffects (s, p.id, e); }); };
+    reverseToggle.onClick = [this] { editPrimary ([on = reverseToggle.getToggleState()] (Scene& s, Point& p) { auto e = p.effects; e.reverse = on; setEffects (s, p.id, e); }); };
+    content.addAndMakeVisible (reverseToggle);
+    effectsNote.setText (u8 ("Gate = Volume Shaper. Delay, reverb, modulaci\xc3\xb3n y formantes: pr\xc3\xb3ximamente."), juce::dontSendNotification);
+    effectsNote.setFont (theme::font (11.0f));
+    effectsNote.setColour (juce::Label::textColourId, theme::textFaint);
+    content.addAndMakeVisible (effectsNote);
+
     // ---- Volume Shaper
     shaperTitle.setText ("VOLUME SHAPER / CORTES", juce::dontSendNotification);
     shaperTitle.setFont (theme::font (11.5f, true));
@@ -439,6 +465,13 @@ void PointPanel::refresh()
     manualEnd.setEnabled (st.enabled && manual);
     pasteButton.setEnabled (stutterClipboard.has_value());
 
+    const auto& fx = p->effects;
+    setIfIdle (fadeIn, fx.fadeInMs);
+    setIfIdle (fadeOut, fx.fadeOutMs);
+    setIfIdle (lowpass, fx.lowpassHz);
+    setIfIdle (highpass, fx.highpassHz);
+    reverseToggle.setToggleState (fx.reverse, juce::dontSendNotification);
+
     const auto& sh = p->shaper;
     shaperToggle.setToggleState (sh.enabled, juce::dontSendNotification);
     {
@@ -553,6 +586,15 @@ int PointPanel::layoutContent (int width)
     labelled (offsetL, offset, pro);
     labelled (stutterGainL, stutterGain, pro);
     stutterNote.setBounds (row (16));
+
+    r.removeFromTop (8);
+    effectsTitle.setBounds (row (24));
+    labelled (fadeInL, fadeIn);
+    labelled (fadeOutL, fadeOut);
+    reverseToggle.setBounds (row (24));
+    labelled (lowpassL, lowpass);
+    labelled (highpassL, highpass);
+    effectsNote.setBounds (row (16));
 
     r.removeFromTop (8);
     auto shh = row (24);

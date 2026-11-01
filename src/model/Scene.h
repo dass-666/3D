@@ -170,6 +170,19 @@ struct ShaperPreset
 };
 const std::vector<ShaperPreset>& shaperPresets();
 
+// Per-repetition effects with real processing. Anything not listed here
+// (delay, reverb, modulation, formants) is not implemented and must not be
+// shown as a working control.
+struct PointEffects
+{
+    double fadeInMs = 0.0, fadeOutMs = 0.0;  // 0..2000, on top of the 2 ms anticlick fades
+    bool reverse = false;                    // plays the region backwards
+    double lowpassHz = 20000.0;              // 200..20000, 20000 = off
+    double highpassHz = 20.0;                // 20..5000, 20 = off
+    bool operator== (const PointEffects&) const = default;
+};
+PointEffects clamped (PointEffects);
+
 struct Point
 {
     juce::String id;     // stable identity: never reused, independent of number and timing
@@ -184,6 +197,7 @@ struct Point
     double gainDb = 0.0;           // -36..+12 dB, independent of pitch and of the global Output
     StutterSettings stutter;
     ShaperSettings shaper;
+    PointEffects effects;
     bool operator== (const Point&) const = default;
 };
 
@@ -260,6 +274,7 @@ bool setGainDb (Scene&, const juce::String& id, double gainDb);
 bool setStutter (Scene&, const juce::String& id, StutterSettings);
 bool setShaper (Scene&, const juce::String& id, ShaperSettings);
 bool setRegion (Scene&, const juce::String& id, PlayRegion);
+bool setEffects (Scene&, const juce::String& id, PointEffects);
 // Switches the scene's time mode, converting every point's moment with `bpm`
 // so nothing moves at that tempo.
 void setTimeMode (Scene&, TimeMode, double bpm);

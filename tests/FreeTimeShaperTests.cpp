@@ -470,3 +470,102 @@ TEST_CASE ("Processor: host input capture becomes the fragment, is embedded and 
     CHECK (audio2->buffer.getNumSamples() == audio->buffer.getNumSamples());
     CHECK (audio2->buffer.getSample (0, 1000) == Catch::Approx (audio->buffer.getSample (0, 1000)).margin (1e-4));
 }
+
+// ---- Per-point effects -----------------------------------------------------
+
+namespace
+{
+std::vector<float> renderOnce (const Scene& s, SharedSample sample, double sr, double seconds, int block = 256)
+{
+    auto plan = buildPlan (s, sample, sr);
+    EchoEngine e;
+    e.prepare (sr);
+    return run (e, *plan, sr, block, seconds, [] (int) { return 120.0; });
+}
+
+float rmsOf (const std::vector<float>& x, int from, int len)
+{
+    double acc = 0.0;
+    for (int i = from; i < from + len; ++i)
+        acc += (double) x[(size_t) i] * x[(size_t) i];
+    return (float) std::sqrt (acc / len);
+}
+} // namespace
+
+TEST_CASE ("Effects: reverse plays the region backwards, fades shape the start and end")
+{
+    const double sr = 48000.0;
+    SampleBuffer ramp (1, 48000);  // 0 -> 1 over one second
+    for (int i = 0; i < 48000; ++i)
+        ramp.setSample (0, i, (float) i / 48000.0f);
+    auto sample = std::make_shared<const SampleBuffer> (ramp);
+
+    Scene s;
+    Point p;
+    p.id = "p"; p.number = 1; p.timing.beat = 0.0;
+    p.effects.reverse = true;
+    s.points.push_back (p);
+    const auto rev = renderOnce (s, sample, sr, 1.1);
+    // At 0.25 s the reversed ramp reads 0.75; at 0.75 s it reads 0.25.
+    CHECK (rev[(size_t) (0.25 * sr)] == Catch::Approx (0.75f).margin (0.01f));
+    CHECK (rev[(size_t) (0.75 * sr)] == Catch::Approx (0.25f).margin (0.01f));
+
+    s.points[0].effects.reverse = false;
+    s.points[0].effects.fadeInMs = 500.0;
+    s.points[0].effects.fadeOutMs = 250.0;
+    const auto faded = renderOnce (s, sample, sr, 1.1);
+    // Fade in: half way through the fade the ramp (0.25) is at half level.
+    CHECK (faded[(size_t) (0.25 * sr)] == Catch::Approx (0.125f).margin (0.01f));
+    CHECK (faded[(size_t) (0.6 * sr)] == Catch::Approx (0.6f).margin (0.01f));   // after both fades: untouched
+    CHECK (faded[(size_t) (0.875 * sr)] == Catch::Approx (0.875f * 0.5f).margin (0.01f));  // half way through the fade out
+}
+
+TEST_CASE ("Effects: low-pass and high-pass filters attenuate the right side")
+{
+    const auto sr = GENERATE (44100.0, 96000.0);
+    auto toneAt = [&] (double hz)
+    {
+        SampleBuffer b (1, (int) sr);
+        for (int i = 0; i < b.getNumSamples(); ++i)
+            b.setSample (0, i, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * hz * i / sr));
+        return std::make_shared<const SampleBuffer> (b);
+    };
+    Scene s;
+    Point p;
+    p.id = "p"; p.number = 1; p.timing.beat = 0.0;
+    s.points.push_back (p);
+    const int from = (int) (0.3 * sr), len = (int) (0.2 * sr);
+
+    const float ref = rmsOf (renderOnce (s, toneAt (100.0), sr, 1.0), from, len);
+    s.points[0].effects.highpassHz = 2000.0;
+    CHECK (rmsOf (renderOnce (s, toneAt (100.0), sr, 1.0), from, len) < ref * 0.1f);   // > 20 dB down
+    CHECK (rmsOf (renderOnce (s, toneAt (8000.0), sr, 1.0), from, len) > ref * 0.8f);  // passes
+
+    s.points[0].effects.highpassHz = 20.0;
+    s.points[0].effects.lowpassHz = 500.0;
+    CHECK (rmsOf (renderOnce (s, toneAt (8000.0), sr, 1.0), from, len) < ref * 0.1f);
+    CHECK (rmsOf (renderOnce (s, toneAt (100.0), sr, 1.0), from, len) > ref * 0.8f);
+}
+
+TEST_CASE ("Effects: persistence and defaults for older scenes")
+{
+    Scene s;
+    s.id = makeId();
+    Point p;
+    p.id = "p"; p.number = 1;
+    p.effects = { 12.0, 34.0, true, 1234.0, 56.0 };
+    s.points.push_back (p);
+    Document d;
+    d.scenes.push_back (s);
+    d.activeSceneId = s.id;
+    const auto back = documentFromJson (toJson (d));
+    REQUIRE (back.value.has_value());
+    CHECK (back.warnings.isEmpty());
+    CHECK (back.value->scenes[0].points[0].effects == p.effects);
+
+    const juce::String old = R"({"format":"SpatialEchoStudio.Document","formatVersion":1,"activeSceneId":"a","scenes":[
+        {"id":"a","name":"x","points":[{"id":"q","number":1}]}]})";
+    const auto legacy = documentFromJson (old);
+    REQUIRE (legacy.value.has_value());
+    CHECK (legacy.value->scenes[0].points[0].effects == PointEffects {});
+}

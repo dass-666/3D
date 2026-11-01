@@ -106,6 +106,14 @@ var pointToVar (const Point& p)
     set (sh, "regionStart", p.shaper.regionStart);
     set (sh, "regionEnd", p.shaper.regionEnd);
     set (o, "shaper", sh);
+
+    auto fx = obj();
+    set (fx, "fadeInMs", p.effects.fadeInMs);
+    set (fx, "fadeOutMs", p.effects.fadeOutMs);
+    set (fx, "reverse", p.effects.reverse);
+    set (fx, "lowpassHz", p.effects.lowpassHz);
+    set (fx, "highpassHz", p.effects.highpassHz);
+    set (o, "effects", fx);
     return o;
 }
 
@@ -304,6 +312,18 @@ struct Reader
             x.regionStart = number (sh, "regionStart", 0.0, 0.0, 1.0, where + ".shaper");
             x.regionEnd = number (sh, "regionEnd", 1.0, 0.0, 1.0, where + ".shaper");
             p.shaper = clamped (x);
+        }
+
+        const auto fx = o.getProperty ("effects", var());
+        if (fx.isObject())
+        {
+            PointEffects e;
+            e.fadeInMs = number (fx, "fadeInMs", 0.0, 0.0, 2000.0, where + ".effects");
+            e.fadeOutMs = number (fx, "fadeOutMs", 0.0, 0.0, 2000.0, where + ".effects");
+            e.reverse = flag (fx, "reverse", false);
+            e.lowpassHz = number (fx, "lowpassHz", 20000.0, 200.0, 20000.0, where + ".effects");
+            e.highpassHz = number (fx, "highpassHz", 20.0, 20.0, 5000.0, where + ".effects");
+            p.effects = clamped (e);
         }
         return p;
     }

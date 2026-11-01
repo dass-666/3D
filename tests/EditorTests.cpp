@@ -106,6 +106,9 @@ TEST_CASE ("Editor: builds, paints, and map/panel/timeline share one model in bo
     std::unique_ptr<juce::AudioProcessorEditor> pro (p.createEditor());
     dynamic_cast<SpatialEchoEditor*> (pro.get())->getContext().select (before.points[1].id, false);
     snapshot (*pro, "ui-pro.png");
+    pro->setSize (1240, 1400);  // tall window: the whole point panel is visible
+    snapshot (*pro, "ui-pro-tall.png");
+    pro->setSize (1240, 840);
     CHECK (p.getSceneForUi() == before);
 
     juce::MemoryBlock state;
