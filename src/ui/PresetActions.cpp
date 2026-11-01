@@ -87,8 +87,10 @@ void askNameAndSave (EditorContext& ctx, juce::Component& parent, std::function<
     w->addButton ("Guardar", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     // The callback runs before the window is deleted (deleteWhenDismissed).
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([&ctx, w, done] (int r)
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([&ctx, w, done, alive = juce::Component::SafePointer<juce::Component> (&parent)] (int r)
     {
+        if (alive == nullptr)
+            return;  // the plugin window was closed meanwhile: `ctx` is gone
         juce::String id;
         if (r == 1)
             id = saveFromSelection (ctx, w->getTextEditorContents ("name").trim());

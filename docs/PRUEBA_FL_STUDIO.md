@@ -226,6 +226,24 @@ Lo que NO existe todavía (no se anuncia en la interfaz): capas vocales, armoniz
 5. **Tamaño de la interfaz** (Escena ▾ → Tamaño): 125 % y 150 % escalan toda la ventana y se guardan con el proyecto. Comprueba que FL Studio redimensiona la ventana del plugin sin recortes.
 6. **CPU**: 16 repeticiones, 256 cortes, cadena completa en todas (presets «Echo Throw»/«Fantasma»/«Wide» + Velocidad 256). En Linux Release el procesador usa ~10 % de tiempo real a 48 kHz y ~21 % a 96 kHz con cualquier tamaño de bloque; anota el % de CPU de FL Studio y el tamaño de buffer.
 
+## 15. B9: presets, exportar a la Playlist y Mixer en vivo
+
+Barra de acciones (debajo de la cabecera, igual en Fácil y Pro): **Importar audio ▾ · Procesar Mixer en vivo · Exportar a Playlist · Mis presets ▾ · Guardar preset**.
+
+1. **Tres cosas distintas que se guardan**:
+   - *Escena* (cabecera, «Escena ▾ → Guardar escena (.sesscene)»): todo el plugin (repeticiones + fragmento). Carpeta por defecto `Documentos\Spatial Echo Studio\Escenas`.
+   - *Preset* («Guardar preset»): solo el sonido, los cortes y los efectos de una repetición (sin posición ni momento). Se guarda en `%APPDATA%\SpatialEchoStudio\presets.json` y aparece en «Mis presets» en todos los proyectos. Sin repetición seleccionada se usa la primera.
+   - *Audio* («Exportar a Playlist»): un archivo .wav.
+   Prueba en **Fácil**: Guardar preset → nombre → aparece el aviso verde; «Mis presets ▾ → Mis presets (n)» lo lista; aplícalo a otra repetición; «Eliminar un preset propio» lo borra; «Abrir la carpeta de presets» abre la carpeta. Abre una escena guardada con B8 o antes: debe cargar igual.
+2. **Exportar audio**: «Exportar a Playlist» → Contenido (mezcla completa o solo la repetición seleccionada), Formato (24 bits PCM, 16 bits PCM con dither, 32 bits float), Frecuencia (Proyecto, 44.1–96 kHz), «Incluir el fragmento original» → **Exportar**. Barra de progreso; **Cancelar** detiene. Comprueba: suena igual que «Probar» (mismo Mix, Salida y Protección, mismo BPM del proyecto); las colas de Delay/Reverb terminan solas (no se cortan); el archivo empieza en el momento del disparo; con 16 bits/24 bits no aparece aviso de recorte si Protección está activa. Los archivos van a `Documentos\Spatial Echo Studio\Exportaciones` (no se sobrescriben).
+3. **Arrastrar a la Playlist (sin verificar)**: tras exportar, arrastra el recuadro «Arrastra este clip a la Playlist» hasta una pista de la Playlist. Anota si FL Studio crea el clip. Si no lo acepta: **Abrir carpeta del audio** y arrastra el .wav desde el Explorador de Windows (esto sí es el flujo estándar de FL Studio). No borres la carpeta: FL Studio enlaza el archivo.
+4. **Procesar Mixer en vivo**: pon el plugin en una pista del Mixer que reciba un loop o una voz, reproduce y pulsa «Procesar Mixer en vivo» (pasa a verde «ACTIVO»; el panel derecho muestra «Mixer en vivo»). Prueba en este orden: Dry/Wet 0 % (suena el original) y 100 %; Filtros (paso alto/bajo); Volume Shaper activado con 4–16 cortes y «Ciclo de cortes» 1 compás: los cortes deben caer siempre en los mismos tiempos aunque empieces la reproducción en otro compás; con FL Studio parado los cortes siguen en bucle a su tempo; Carácter, Modulación, Delay, Reverb y su orden; Espacio/Paneo. Detén la reproducción: la cola de reverb/delay sigue sonando (si FL Studio corta la cola, revisa «Smart disable» del plugin). Bypass devuelve el original exacto. Las repeticiones disparadas siguen sonando encima. «Capturar últimos N s» sigue capturando la entrada original (sin procesar).
+5. **Latencia y CPU**: el modo en vivo no añade latencia (0 muestras: no hace falta compensación). Anota el % de CPU de FL Studio con el modo en vivo y cadena completa, y el tamaño de buffer.
+6. **Persistencia**: con el modo en vivo activo y ajustado, guarda el proyecto de FL Studio, ciérralo y ábrelo: el modo en vivo y sus ajustes deben volver. Los presets propios no van en el proyecto (están en tu usuario).
+7. **Regresión B8**: repite rápidamente los puntos de la sección 14 (deshacer, aceleración, orden de cadena, tamaño).
+
+Límites conocidos de B9: en vivo no hay pitch, formantes ni Stutter (necesitan el fragmento pre-renderizado: usa Capturar + repeticiones); el ciclo de cortes en vivo usa el tempo del proyecto y la exportación se renderiza al BPM que tenía el proyecto al exportar (un cambio de tempo durante las repeticiones no se refleja); bloques del host mayores de 4096 muestras (o del doble del anunciado) pasan sin procesar en vivo.
+
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la
   repetición ante pequeñas diferencias de posición del host) se reprodujo en
