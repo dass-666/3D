@@ -5,6 +5,7 @@
 
 #include "ui/ActionBar.h"
 #include "ui/CurveEditor.h"
+#include "ui/ExportPanel.h"
 #include "ui/EditorContext.h"
 #include "ui/HeaderBar.h"
 #include "ui/OutputMeter.h"
@@ -39,6 +40,7 @@ public:
     bool isCurveEditorOpen() const noexcept { return curveOpen; }
     ProSidebar& getSidebar() noexcept { return sidebar; }
     ActionBar& getActionBar() noexcept { return actions; }
+    ExportPanel& getExportPanel() noexcept { return exportPanel; }
     PointPanel& getPointPanel() noexcept { return pointPanel; }
     enum class CenterView { Cuts, Map, Audio };
     void setCenterView (CenterView);              // Pro only
@@ -64,6 +66,7 @@ private:
 
     HeaderBar header;
     ActionBar actions;
+    ExportPanel exportPanel;
     WaveformView waveform;
     SpatialMap map;
     PointPanel pointPanel;

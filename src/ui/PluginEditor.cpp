@@ -9,7 +9,7 @@ const juce::String dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
 }
 
 SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
-    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), actions (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx), sidebar (ctx)
+    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), actions (ctx), exportPanel (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx), sidebar (ctx)
 {
     ctx.addListener (this);
 
@@ -20,6 +20,8 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     header.onModeChange = [this] (bool pro) { setProMode (pro); };
     header.onScaleChange = [this] (int pct) { setUiScale (pct); };
     actions.onImport = [this] (juce::Component& anchor) { showImportMenu (anchor); };
+    actions.onExport = [this] { exportPanel.setBounds (getLocalBounds()); exportPanel.open(); };
+    addChildComponent (exportPanel);
     addChildComponent (curveEditor);
     curveEditor.onClose = [this] { showCurveEditor (false); };
     curveEditor.onExpand = [this] { showCurveEditor (true); };
@@ -546,6 +548,7 @@ void SpatialEchoEditor::resized()
         footer.setBounds (line);
     }
 
+    exportPanel.setBounds (getLocalBounds());
     r.reduce (12, 10);
     if (curveOpen)
         curveEditor.setBounds (r);  // covers everything below the header until closed

@@ -46,7 +46,118 @@ SpatialEchoProcessor::SpatialEchoProcessor()
     pitchRenderer.onRenderFinished = [this] { rebuildPlan(); };
 }
 
-SpatialEchoProcessor::~SpatialEchoProcessor() = default;
+class SpatialEchoProcessor::ExportJob final : public juce::Thread
+{
+public:
+    ExportJob (Scene sc, std::shared_ptr<const DecodedAudio> src, OfflineRenderSettings rs, ExportRequest rq)
+        : juce::Thread ("SES export"), scene (std::move (sc)), source (std::move (src)), settings (std::move (rs)), request (std::move (rq))
+    {
+        status.state = ExportStatus::State::Running;
+        status.file = request.file;
+        status.sampleRate = settings.sampleRate;
+        status.bpm = settings.bpm;
+    }
+    ~ExportJob() override { stopThread (10000); }
+
+    ExportStatus get() const { const juce::ScopedLock sl (lock); return status; }
+
+private:
+    void run() override
+    {
+        auto r = renderOffline (scene, source.get(), settings, [this] (double p)
+        {
+            const juce::ScopedLock sl (lock);
+            status.progress = p;
+            return ! threadShouldExit();
+        });
+        ExportStatus st = get();
+        st.points = r.pointsRendered;
+        if (r.cancelled || threadShouldExit())
+        {
+            st.state = ExportStatus::State::Cancelled;
+            st.message = juce::String::fromUTF8 ("Exportaci\xc3\xb3n cancelada");
+        }
+        else if (r.error.isNotEmpty())
+        {
+            st.state = ExportStatus::State::Failed;
+            st.message = r.error;
+        }
+        else
+        {
+            const auto w = writeWavFile (request.file, r.audio, settings.sampleRate, request.format);
+            st.seconds = r.audio.getNumSamples() / settings.sampleRate;
+            st.peakDb = juce::Decibels::gainToDecibels (r.peak, -100.0f);
+            st.truncated = r.truncated;
+            st.clipped = request.format != WavFormat::Float32 && r.peak > 1.0f;
+            st.state = w.wasOk() ? ExportStatus::State::Done : ExportStatus::State::Failed;
+            st.message = w.wasOk() ? juce::String() : w.getErrorMessage();
+            st.progress = 1.0;
+        }
+        const juce::ScopedLock sl (lock);
+        status = st;
+    }
+
+    Scene scene;
+    std::shared_ptr<const DecodedAudio> source;
+    OfflineRenderSettings settings;
+    ExportRequest request;
+    juce::CriticalSection lock;
+    ExportStatus status;
+};
+
+SpatialEchoProcessor::~SpatialEchoProcessor()
+{
+    exportJob.reset();  // stops a running export before anything it reads goes away
+}
+
+juce::File SpatialEchoProcessor::exportFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Spatial Echo Studio").getChildFile ("Exportaciones");
+}
+
+juce::File SpatialEchoProcessor::suggestExportFile (const juce::String& onlyPointId) const
+{
+    const auto scene = getSceneForUi();
+    auto name = juce::File::createLegalFileName (scene.name.isEmpty() ? juce::String ("Escena") : scene.name).replaceCharacter (' ', '_');
+    if (onlyPointId.isNotEmpty())
+        if (const auto* p = findPoint (scene, onlyPointId))
+            name << "_rep" << p->number;
+    name << "_" << juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
+    return exportFolder().getNonexistentChildFile (name, ".wav", false);
+}
+
+juce::Result SpatialEchoProcessor::startExport (const ExportRequest& rq)
+{
+    if (exportJob != nullptr && exportJob->isThreadRunning())
+        return juce::Result::fail (juce::String::fromUTF8 ("Ya hay una exportaci\xc3\xb3n en curso"));
+    if (rq.file == juce::File())
+        return juce::Result::fail ("Falta el archivo de destino");
+    OfflineRenderSettings rs;
+    rs.sampleRate = rq.sampleRate > 0.0 ? rq.sampleRate : hostSampleRate.load();
+    rs.bpm = getProjectBpm();
+    rs.onlyPointId = rq.onlyPointId;
+    rs.includeFragment = rq.includeFragment;
+    rs.mixPercent = mixPercent->load();
+    rs.outputDb = outputDb->load();
+    rs.protect = protectValue->load() > 0.5f;
+    exportJob.reset();
+    exportJob = std::make_unique<ExportJob> (getSceneForUi(), getSourceAudio(), rs, rq);
+    exportJob->startThread (juce::Thread::Priority::low);
+    diagnostics.log ("export started " + rq.file.getFileName() + " sr=" + juce::String (rs.sampleRate) + " bits=" + juce::String (bitsFor (rq.format))
+                     + " bpm=" + juce::String (rs.bpm, 2) + (rq.onlyPointId.isNotEmpty() ? " (one point)" : " (mix)"));
+    return juce::Result::ok();
+}
+
+void SpatialEchoProcessor::cancelExport()
+{
+    if (exportJob != nullptr)
+        exportJob->signalThreadShouldExit();
+}
+
+SpatialEchoProcessor::ExportStatus SpatialEchoProcessor::getExportStatus() const
+{
+    return exportJob != nullptr ? exportJob->get() : ExportStatus {};
+}
 
 juce::AudioProcessorParameter* SpatialEchoProcessor::getBypassParameter() const
 {

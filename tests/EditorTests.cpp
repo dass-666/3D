@@ -600,3 +600,44 @@ TEST_CASE ("Action bar: presets are saved, applied and deleted from both modes, 
     CHECK (after.find (id) == nullptr);
     presetFile.deleteFile();
 }
+
+TEST_CASE ("Export panel: options, background render, draggable result")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 40.0, 50.0 }, Timing { 0.0, 0.0 }); addPoint (s, { 60.0, 50.0 }, Timing { 1.0, 0.0 }); });
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1240, 840);
+    auto& bar = ed.getActionBar();
+    auto& panel = ed.getExportPanel();
+    CHECK_FALSE (panel.isVisible());
+    bar.exportButton.onClick();
+    REQUIRE (panel.isVisible());
+    CHECK (panel.exportButton.isEnabled());
+
+    // 32-bit float at 44.1 kHz, only the selected repetition.
+    ed.getContext().select (ed.getContext().scene().points[1].id, false);
+    panel.formatBox.setSelectedId (32);
+    panel.rateBox.setSelectedId (44100);
+    panel.contentBox.setSelectedId (2);
+    auto rq = panel.currentRequest();
+    CHECK (rq.format == WavFormat::Float32);
+    CHECK (rq.sampleRate == 44100.0);
+    CHECK (rq.onlyPointId == ed.getContext().scene().points[1].id);
+    CHECK (rq.file.getParentDirectory() == SpatialEchoProcessor::exportFolder());
+
+    panel.contentBox.setSelectedId (1);
+    panel.startExport();
+    for (int i = 0; i < 500 && p.getExportStatus().state == SpatialEchoProcessor::ExportStatus::State::Running; ++i)
+        juce::Thread::sleep (10);
+    panel.open();  // refreshes from the status (the panel's timer does this in the plugin)
+    const auto st = p.getExportStatus();
+    REQUIRE (st.state == SpatialEchoProcessor::ExportStatus::State::Done);
+    CHECK (panel.lastFile() == st.file);
+    CHECK (panel.saveAsButton.isEnabled());
+    snapshot (ed, "b9-export.png");
+    st.file.deleteFile();
+}

@@ -45,6 +45,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/HostCapture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/PointFx.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/OfflineRender.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Theme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/HeaderBar.cpp
@@ -56,6 +57,7 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ProSidebar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PresetActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ActionBar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ExportPanel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/UserPresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp

@@ -2,6 +2,7 @@
 
 #include "audio/EchoEngine.h"
 #include "audio/HostCapture.h"
+#include "audio/OfflineRender.h"
 #include "audio/PitchRenderer.h"
 #include "audio/PlanExchange.h"
 #include "audio/SafetyLimiter.h"
@@ -128,7 +129,39 @@ public:
     int getUiScalePercent() const noexcept { return uiScalePercent.load(); }
     void setUiScalePercent (int p) noexcept { uiScalePercent.store (juce::jlimit (100, 150, p)); }
 
+    // ---- «Exportar audio»: renders the repetitions to a WAV file on a
+    // background thread (same engine and settings as what is heard). Message thread.
+    struct ExportRequest
+    {
+        juce::File file;
+        WavFormat format = WavFormat::Pcm24;
+        double sampleRate = 0.0;      // 0 = the project's (host) sample rate
+        juce::String onlyPointId;     // empty = every enabled repetition
+        bool includeFragment = false; // also the original fragment at t = 0
+    };
+    struct ExportStatus
+    {
+        enum class State { Idle, Running, Done, Failed, Cancelled };
+        State state = State::Idle;
+        double progress = 0.0;
+        juce::File file;
+        double seconds = 0.0, sampleRate = 0.0, bpm = 0.0;
+        float peakDb = -100.0f;
+        bool truncated = false, clipped = false;
+        int points = 0;
+        juce::String message;
+    };
+    juce::Result startExport (const ExportRequest&);
+    void cancelExport();
+    ExportStatus getExportStatus() const;
+    static juce::File exportFolder();  // Documents/Spatial Echo Studio/Exportaciones
+    juce::File suggestExportFile (const juce::String& onlyPointId) const;
+    double getProjectSampleRate() const noexcept { return hostSampleRate.load(); }
+    double getProjectBpm() const noexcept { return hostSnapshot.hasBpm.load() ? hostSnapshot.bpm.load() : EchoEngine::kFallbackBpm; }
+
 private:
+    class ExportJob;
+    std::unique_ptr<ExportJob> exportJob;
     void rebuildPlan();                   // caller must NOT hold documentLock
     void restoreSourceFromDocument();     // reads/clears embedded bytes of the active scene
     void takeEmbeddedBytes();             // moves embedded bytes out of `document`
