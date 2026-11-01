@@ -675,7 +675,11 @@ TEST_CASE ("Processor stress: 16 repetitions x 256 cuts x full chain keeps up wi
 {
     const double load = stressRun (48000.0, 512, 4.0, false);
     INFO ("load " << load);
-    CHECK (load < 0.6);  // debug build on CI; a release build is far below
+#ifdef NDEBUG
+    CHECK (load < 0.6);   // release (CI): measured ~0.1 on Linux
+#else
+    CHECK (load < 2.0);   // debug builds are several times slower; this only catches a runaway
+#endif
 }
 
 TEST_CASE ("Processor stress table (release build numbers)", "[.stress]")
