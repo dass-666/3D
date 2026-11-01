@@ -337,6 +337,17 @@ SharedSample renderSample (const SourceRef& ref, const DecodedAudio* source, dou
     return std::make_shared<const SampleBuffer> (resampled (trimmed, hostSampleRate));
 }
 
+FxAssignment makeFxAssignment (juce::uint64 key, const PointEffects& fx)
+{
+    FxAssignment a;
+    a.key = key;
+    a.effects = fx;
+    const auto order = normalisedChainOrder (fx.chainOrder);
+    for (int k = 0; k < 4; ++k)
+        a.order[k] = (char) order[k];
+    return a;
+}
+
 std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, const std::map<int, SharedSample>& pitched,
                                          double hostSampleRate, const PlaybackPlan* previous)
 {
@@ -353,7 +364,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             for (int i = 0; i < limits::maxFxPoints; ++i)
                 if (previous->fx[(size_t) i].key == key && plan->fx[(size_t) i].key == 0)
                 {
-                    plan->fx[(size_t) i] = { key, fx };
+                    plan->fx[(size_t) i] = makeFxAssignment (key, fx);
                     return i;
                 }
         for (int i = 0; i < limits::maxFxPoints; ++i)
@@ -361,13 +372,13 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
                                                   || std::none_of (scene.points.begin(), scene.points.end(), [&] (const Point& q)
                                                                    { return q.enabled && keyForPoint (q.id) == previous->fx[(size_t) i].key && clamped (q.effects).usesChain(); })))
             {
-                plan->fx[(size_t) i] = { key, fx };
+                plan->fx[(size_t) i] = makeFxAssignment (key, fx);
                 return i;
             }
         for (int i = 0; i < limits::maxFxPoints; ++i)  // all slots belong to live points: take any free one
             if (plan->fx[(size_t) i].key == 0)
             {
-                plan->fx[(size_t) i] = { key, fx };
+                plan->fx[(size_t) i] = makeFxAssignment (key, fx);
                 return i;
             }
         ++plan->pointsWithoutFx;
@@ -555,7 +566,7 @@ void EchoEngine::renderFx (juce::AudioBuffer<float>& out, const PlaybackPlan* pl
                 peak = std::max (peak, std::max (std::abs (l[i]), std::abs (r[i])));
             f.chain.noteInput (peak, f.effects);
         }
-        f.chain.process (f.effects, l, r, n, bpmUsed);
+        f.chain.process (f.effects, f.order, l, r, n, bpmUsed);
         if (outChannels == 1)
             for (int i = 0; i < n; ++i)
                 out.addSample (0, i, 0.5f * (l[i] + r[i]));
@@ -792,7 +803,22 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
                 f.chain.reset();
                 f.key = plan->fx[i].key;
             }
-            f.effects = plan->fx[i].effects;
+            {
+                // Copy the POD parts only: the model's juce::String (chainOrder) must not be
+                // copied or released on the audio thread.
+                const auto& src = plan->fx[i].effects;
+                f.effects.fadeInMs = src.fadeInMs;
+                f.effects.fadeOutMs = src.fadeOutMs;
+                f.effects.reverse = src.reverse;
+                f.effects.lowpassHz = src.lowpassHz;
+                f.effects.highpassHz = src.highpassHz;
+                f.effects.character = src.character;
+                f.effects.modulation = src.modulation;
+                f.effects.delay = src.delay;
+                f.effects.reverb = src.reverb;
+                for (int k = 0; k < 4; ++k)
+                    f.order[k] = plan->fx[i].order[k];
+            }
         }
         else if (plan == nullptr)
         {

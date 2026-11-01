@@ -23,6 +23,9 @@ public:
 
     // In place on `left`/`right` (n samples). `bpm` for the synced delay.
     void process (const PointEffects&, float* left, float* right, int n, double bpm) noexcept;
+    // Same, with the stage order given as four chars (the engine keeps it as a
+    // POD so no juce::String is copied or parsed on the audio thread).
+    void process (const PointEffects&, const char order[4], float* left, float* right, int n, double bpm) noexcept;
 
     // True while a delay/reverb tail may still be sounding after the last input.
     bool isTailActive() const noexcept { return tailLeft > 0; }
@@ -60,6 +63,7 @@ private:
     std::vector<float> dlBuf[2];
     int dlWrite = 0;
     double dlSamples = 0.0;  // smoothed read distance
+    int dlValid = 0;         // samples written since reset: older history reads as silence (reset is O(1))
     float dlLp[2] {};
     float mixD = 0.0f, fbD = 0.0f;
 

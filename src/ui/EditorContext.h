@@ -46,21 +46,27 @@ public:
 
     void edit (const std::function<void (Scene&)>& fn)
     {
+        refreshIfChanged();  // never snapshot a scene the host changed behind us
         pushUndo();
         expectingChange = true;
         processor.editScene (fn);
         refreshIfChanged();
     }
 
-    // ---- document undo / redo (message thread). Every edit() is a step; edits
-    // closer than kCoalesceMs (slider drags) merge into one. The source audio
-    // is never part of a step: undo restores points and settings only.
-    static constexpr int kCoalesceMs = 500;
+    // ---- document undo / redo (message thread). Every edit() is a step, except
+    // that all edits inside a gesture (beginGesture/endGesture around a mouse
+    // drag) and edits closer than kCoalesceMs (mouse-wheel ticks) merge into
+    // one. The source audio is never part of a step: undo restores points and
+    // settings only.
+    static constexpr int kCoalesceMs = 150;
+    void beginGesture() noexcept { ++gestureDepth; }
+    void endGesture() noexcept { if (gestureDepth > 0 && --gestureDepth == 0) { gesturePushed = false; lastEditMs = 0; } }
     static constexpr size_t kMaxHistory = 200;
     bool canUndo() const noexcept { return ! undoStack.empty(); }
     bool canRedo() const noexcept { return ! redoStack.empty(); }
     void undo()
     {
+        refreshIfChanged();
         if (undoStack.empty())
             return;
         redoStack.push_back (cached);
@@ -70,6 +76,7 @@ public:
     }
     void redo()
     {
+        refreshIfChanged();
         if (redoStack.empty())
             return;
         undoStack.push_back (cached);
@@ -130,10 +137,16 @@ private:
     void pushUndo()
     {
         const auto now = juce::Time::getMillisecondCounter();
-        if (! undoStack.empty() && now - lastEditMs < (juce::uint32) kCoalesceMs)
+        if (gestureDepth > 0)
+        {
+            if (gesturePushed)
+                return;  // same drag
+            gesturePushed = true;
+        }
+        else if (! undoStack.empty() && lastEditMs != 0 && now - lastEditMs < (juce::uint32) kCoalesceMs)
         {
             lastEditMs = now;
-            return;  // part of the same step
+            return;  // wheel ticks
         }
         lastEditMs = now;
         undoStack.push_back (cached);
@@ -181,6 +194,8 @@ private:
     std::vector<Scene> undoStack, redoStack;
     juce::uint32 lastEditMs = 0;
     bool expectingChange = false;
+    int gestureDepth = 0;
+    bool gesturePushed = false;
     juce::StringArray selected;
     juce::ListenerList<Listener> listeners;
 };

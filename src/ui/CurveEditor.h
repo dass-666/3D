@@ -20,6 +20,7 @@ public:
 
     std::function<void()> onClose;
     std::function<void()> onExpand;        // embedded mode: "Ampliar"
+    std::function<void()> onStateChanged;  // B stored, history moved... (bottom bar)
 
     // Embedded in the Pro layout: no "Cerrar", an "Ampliar" button, toolbar wraps to the width.
     void setEmbedded (bool);

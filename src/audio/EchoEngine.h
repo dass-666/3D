@@ -69,7 +69,9 @@ struct FxAssignment
 {
     juce::uint64 key = 0;  // 0 = free
     PointEffects effects;
+    char order[4] { 'c', 'm', 'd', 'r' };  // effects.chainOrder as a POD for the audio thread
 };
+FxAssignment makeFxAssignment (juce::uint64 key, const PointEffects&);
 
 // Volume Shaper evaluation (pure; shared by the engine and the UI preview).
 // `t` and `length` in seconds from the start of the voice; `divisionSeconds`
@@ -262,7 +264,8 @@ private:
     struct FxSlot
     {
         juce::uint64 key = 0;
-        PointEffects effects;   // last settings seen (used while a tail rings after unassignment)
+        PointEffects effects;   // last settings seen (used while a tail rings after unassignment); POD fields only are copied
+        char order[4] { 'c', 'm', 'd', 'r' };
         PointFxChain chain;
         juce::AudioBuffer<float> send;  // stereo, kMaxFxBlock
         bool fedThisBlock = false;

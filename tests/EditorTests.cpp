@@ -498,10 +498,12 @@ TEST_CASE ("Document undo/redo: steps, coalesced drags, redo cleared by a new ed
     CHECK (ctx.scene().points[0].position == Position { 10.0, 10.0 });
     CHECK (! ctx.canRedo());
 
-    // A drag (many edits within the coalescing window) is one step.
+    // A drag (edits between beginGesture and endGesture) is one step.
     ctx.breakUndoGroup();
+    ctx.beginGesture();
     for (int i = 1; i <= 20; ++i)
         ctx.edit ([&, i] (Scene& s) { setGainDb (s, id, -6.0 - i * 0.5); });
+    ctx.endGesture();
     CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-16.0, 1e-9));
     ctx.undo();
     CHECK_THAT (ctx.scene().points[0].gainDb, Catch::Matchers::WithinAbs (-6.0, 1e-9));

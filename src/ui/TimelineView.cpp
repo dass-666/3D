@@ -330,6 +330,7 @@ void TimelineView::updatePlayhead()
 
 void TimelineView::mouseDown (const juce::MouseEvent& e)
 {
+    ctx.beginGesture();  // one undo step per drag
     const bool additive = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown();
     if (auto* b = hit (e.position))
     {
@@ -372,6 +373,7 @@ void TimelineView::mouseDrag (const juce::MouseEvent& e)
 
 void TimelineView::mouseUp (const juce::MouseEvent&)
 {
+    ctx.endGesture();
     dragging = false;
 }
 

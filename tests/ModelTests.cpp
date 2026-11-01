@@ -294,6 +294,10 @@ TEST_CASE ("User presets: saved to a file, reloaded, favourites kept, removal, a
     {
         UserPresetStore store (file);
         CHECK (store.load().failed());
+        CHECK (store.loadFailed());
+        store.setFavourite ("x", true);  // must not overwrite the unreadable file
+        CHECK (file.loadFileAsString() == "not json");
+        CHECK (file.getSiblingFile ("presets-ilegible.json").existsAsFile());
     }
     dir.deleteRecursively();
 }

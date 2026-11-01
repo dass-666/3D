@@ -59,10 +59,13 @@ void PointFxChain::prepare (double sampleRate, int)
 
 void PointFxChain::reset() noexcept
 {
-    for (auto* set : { modBuf, dlBuf, preBuf })
+    // The 2 s delay line is not cleared (16 slots x 1.5 MB at 96 kHz took
+    // milliseconds on the audio thread): `dlValid` makes older history read as 0.
+    for (auto* set : { modBuf, preBuf })
         for (int ch = 0; ch < 2; ++ch)
             std::fill (set[ch].begin(), set[ch].end(), 0.0f);
     modWrite = dlWrite = preWrite = 0;
+    dlValid = 0;
     lfoPhase = ringPhase = 0.0;
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -104,10 +107,18 @@ void PointFxChain::noteInput (float peak, const PointEffects& fx) noexcept
 
 void PointFxChain::process (const PointEffects& fx, float* l, float* r, int n, double bpm) noexcept
 {
-    // Stages run in the point's order (a permutation of "cmdr"; the string is
-    // validated on the message thread, unknown characters are ignored here).
-    const auto* order = fx.chainOrder.toRawUTF8();
-    for (int i = 0; i < 4 && order[i] != 0; ++i)
+    char order[4] { 'c', 'm', 'd', 'r' };
+    const auto s = normalisedChainOrder (fx.chainOrder);  // message thread / tests only
+    for (int i = 0; i < 4; ++i)
+        order[i] = (char) s[i];
+    process (fx, order, l, r, n, bpm);
+}
+
+void PointFxChain::process (const PointEffects& fx, const char order[4], float* l, float* r, int n, double bpm) noexcept
+{
+    // Stages run in the point's order (a permutation of "cmdr", validated on
+    // the message thread; unknown characters are ignored here).
+    for (int i = 0; i < 4; ++i)
     {
         switch (order[i])
         {
@@ -347,8 +358,11 @@ void PointFxChain::processDelay (const DelaySettings& d, float* l, float* r, int
         dlSamples += (target - dlSamples) * glide;
         fbD += fbStep;
         mixD += mixStep;
-        const float outL = readLine (dlBuf[0], dlWrite, dlSamples);
-        const float outR = readLine (dlBuf[1], dlWrite, dlSamples);
+        const bool history = dlSamples + 1.0 <= (double) dlValid;
+        const float outL = history ? readLine (dlBuf[0], dlWrite, dlSamples) : 0.0f;
+        const float outR = history ? readLine (dlBuf[1], dlWrite, dlSamples) : 0.0f;
+        if (dlValid < size)
+            ++dlValid;
         dlLp[0] += lpCoef * (outL - dlLp[0]);
         dlLp[1] += lpCoef * (outR - dlLp[1]);
         if (d.pingPong)

@@ -49,9 +49,13 @@ juce::Result UserPresetStore::load()
     auto r = userPresetsFromJson (file.loadFileAsString());
     if (! r)
     {
+        // Keep the user's file: a copy next to it, and no saving until a load works.
+        loadBroken = true;
         lastError = r.error;
+        file.copyFileTo (file.getSiblingFile (file.getFileNameWithoutExtension() + "-ilegible.json"));
         return juce::Result::fail (r.error);
     }
+    loadBroken = false;
     data = std::move (*r.value);
     sendChangeMessage();
     return juce::Result::ok();
@@ -61,6 +65,8 @@ juce::Result UserPresetStore::save() const
 {
     if (file == juce::File())
         return juce::Result::ok();
+    if (loadBroken)
+        return juce::Result::fail ("El archivo de presets no se pudo leer; no se sobrescribe (" + lastError + ")");
     if (! file.getParentDirectory().createDirectory())
         return juce::Result::fail ("No se pudo crear " + file.getParentDirectory().getFullPathName());
     if (! file.replaceWithText (userPresetsToJson (data)))

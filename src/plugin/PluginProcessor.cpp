@@ -161,13 +161,6 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     else
         limiter.idle();
     hostSnapshot.limiterGainDb.store (juce::Decibels::gainToDecibels (limiter.lastMinGain(), -60.0f));
-    {
-        float peak = 0.0f;
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, n));
-        if (peak > outputPeak.load (std::memory_order_relaxed))
-            outputPeak.store (peak, std::memory_order_relaxed);
-    }
 
     if (needDry && canCrossfade)
     {
@@ -194,6 +187,14 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         bypassMix.skip (n);
     }
 
+    {
+        // Output meter: what the host actually receives (after the bypass crossfade).
+        float peak = 0.0f;
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, n));
+        if (peak > outputPeak.load (std::memory_order_relaxed))
+            outputPeak.store (peak, std::memory_order_relaxed);
+    }
     hostSnapshot.store (transport, n, engine.stats(), engine);
 }
 

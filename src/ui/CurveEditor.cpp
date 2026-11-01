@@ -203,6 +203,8 @@ void CurveEditor::visibilityChanged()
 
 void CurveEditor::refreshButtons()
 {
+    if (onStateChanged)
+        onStateChanged();
     const auto* sh = current();
     const bool has = sh != nullptr;
     const bool manual = has && sh->custom;
@@ -793,6 +795,7 @@ void CurveEditor::resized()
 
 void CurveEditor::mouseDown (const juce::MouseEvent& e)
 {
+    ctx.beginGesture();  // one undo step per drag
     if (isShowing())
         grabKeyboardFocus();
     lastMouse = e.position;
@@ -846,6 +849,7 @@ void CurveEditor::mouseDrag (const juce::MouseEvent& e)
 
 void CurveEditor::mouseUp (const juce::MouseEvent&)
 {
+    ctx.endGesture();
     if (dragging >= 0)
     {
         record();

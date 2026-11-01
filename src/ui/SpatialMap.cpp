@@ -186,6 +186,7 @@ void SpatialMap::paint (juce::Graphics& g)
 
 void SpatialMap::mouseDown (const juce::MouseEvent& e)
 {
+    ctx.beginGesture();  // one undo step per drag
     if (isShowing())
         grabKeyboardFocus();
     const bool additive = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown();
@@ -240,6 +241,7 @@ void SpatialMap::mouseDrag (const juce::MouseEvent& e)
 
 void SpatialMap::mouseUp (const juce::MouseEvent& e)
 {
+    ctx.endGesture();
     draggingPoints = false;
     if (lasso)
     {

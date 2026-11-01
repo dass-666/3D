@@ -221,6 +221,7 @@ void WaveformView::mouseMove (const juce::MouseEvent& e)
 
 void WaveformView::mouseDown (const juce::MouseEvent& e)
 {
+    ctx.beginGesture();  // one undo step per drag
     if (audio == nullptr)
         return;
     if (std::abs (e.position.x - xFor (selStart)) < 6.0f)
@@ -256,6 +257,7 @@ void WaveformView::mouseDrag (const juce::MouseEvent& e)
 
 void WaveformView::mouseUp (const juce::MouseEvent& e)
 {
+    ctx.endGesture();
     if (audio == nullptr || drag == Drag::None)
         return;
     const bool wasClick = drag == Drag::New && e.getDistanceFromDragStart() < 3;

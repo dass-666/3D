@@ -54,11 +54,13 @@ public:
     const juce::StringArray& favourites() const noexcept { return data.favourites; }
 
     juce::String lastError;
+    bool loadFailed() const noexcept { return loadBroken; }  // the file could not be read: saving is refused so it is not overwritten
 
 private:
     void changed();
     juce::File file;
     UserPresetFile data;
+    bool loadBroken = false;
 };
 
 } // namespace ses

@@ -604,6 +604,8 @@ void PointPanel::setupSlider (juce::Slider& s, juce::Label& l, const juce::Strin
     s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 22);
     s.setRange (lo, hi, step);
     s.setTextValueSuffix (suffix);
+    s.onDragStart = [this] { ctx.beginGesture(); };
+    s.onDragEnd = [this] { ctx.endGesture(); };
     content.addAndMakeVisible (s);
     l.setText (name, juce::dontSendNotification);
     l.setFont (theme::font (12.5f));

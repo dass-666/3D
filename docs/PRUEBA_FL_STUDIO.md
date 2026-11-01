@@ -71,8 +71,10 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
    saturación (con «Protección»).
 4. «Copiar Stutter» en un punto y «Pegar Stutter» con varios seleccionados:
    todos reciben la misma configuración.
-5. Lo que **no** existe todavía y la interfaz marca como «próximamente»:
-   aceleración progresiva, «carácter» (Robot/Fantasma) y «velocidad».
+5. «Aceleración» (−100…100 %): > 0 los cortes se acercan progresivamente, < 0
+   se separan; la duración total no cambia y la línea temporal dibuja los
+   cortes donde suenan (sección 14). «Carácter» (Robot/Monster…) está en la
+   cadena de efectos (sección 12).
 
 ## 8. Tiempo libre (ms)
 1. En la línea temporal cambia «Sincronizado al BPM» por «Tiempo libre (ms)»:
@@ -160,7 +162,8 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
    control lo apaga.
 
 ## 12. Cadena de efectos por repetición (nueva fase)
-Orden fijo: carácter → modulación → delay → reverb. Cada bloque tiene su
+Orden por defecto: carácter → modulación → delay → reverb; se cambia en la
+sección «Cadena de efectos (orden)» con ▲▼ (sección 14). Cada bloque tiene su
 «Activar» y su «Mezcla» (Pro). Hasta 16 repeticiones con cadena a la vez; la
 17.ª suena sin efectos (la interfaz lo dice).
 1. **Delay.** Activar, 250 ms, feedback 50 %, mezcla 40 %: ecos cada 250 ms
@@ -212,7 +215,16 @@ Objetivo: comprobar que la nueva distribución del Modo Pro funciona dentro de F
 9. Cambia Fácil ↔ Pro varias veces, guarda el proyecto, ciérralo y vuelve a abrirlo: el preset activo, las curvas y las secciones deben conservarse (las secciones plegadas no se guardan; es solo visual).
 10. Rendimiento: con 16 repeticiones y 256 cortes, arrastra puntos en el editor; la interfaz no debe dar tirones y el audio no debe cortarse (activa el Registro de diagnóstico y mira «perdidas» y «limitador»).
 
-Lo que NO existe todavía (no se anuncia en la interfaz): favoritos de presets, guardar presets propios, deshacer/rehacer global (solo dentro del editor de curva), reordenar la cadena de efectos, aceleración progresiva del Stutter.
+Lo que NO existe todavía (no se anuncia en la interfaz): capas vocales, armonización, audio 3D/binaural.
+
+## 14. B8: deshacer, aceleración del Stutter, orden de la cadena, presets propios, tamaño
+
+1. **Deshacer/rehacer** (↶ ↷ en la cabecera, Ctrl+Z / Ctrl+Y): mueve un punto, cambia un mando y borra un punto; cada Ctrl+Z deshace una acción. Un arrastre largo de un mando es un solo paso. Cargar un WAV o abrir un proyecto no se deshace y vacía el historial (es intencionado). El audio cargado nunca cambia con deshacer.
+2. **Aceleración del Stutter** (panel Stutter): con 16 repeticiones y +100 %, los cortes se amontonan al final como una pelota que bota; con −100 % se separan. La duración total es la misma que con 0 %. Comprueba que la línea temporal coincide con lo que oyes.
+3. **Orden de la cadena** (categoría «Cadena de efectos (orden)»): con Bitcrusher + Delay, sube el delay por encima del carácter (▲): los ecos dejan de estar triturados uno a uno y se tritura la mezcla. Guarda y reabre: el orden se conserva.
+4. **Presets propios**: ▾ en la tarjeta del preset → «Guardar la repetición como preset propio…», nombre, Guardar. Aparece en «Propios», en ◀ ▶ y en «Preset creativo» del panel. ☆ marca favorito (sección «Favoritos» del menú). Los presets se guardan en `%APPDATA%\SpatialEchoStudio\presets.json` y se comparten entre instancias y proyectos. «Eliminar este preset propio» lo borra.
+5. **Tamaño de la interfaz** (Escena ▾ → Tamaño): 125 % y 150 % escalan toda la ventana y se guardan con el proyecto. Comprueba que FL Studio redimensiona la ventana del plugin sin recortes.
+6. **CPU**: 16 repeticiones, 256 cortes, cadena completa en todas (presets «Echo Throw»/«Fantasma»/«Wide» + Velocidad 256). En Linux Release el procesador usa ~10 % de tiempo real a 48 kHz y ~21 % a 96 kHz con cualquier tamaño de bloque; anota el % de CPU de FL Studio y el tamaño de buffer.
 
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la

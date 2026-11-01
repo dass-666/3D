@@ -44,6 +44,8 @@ ProSidebar::ProSidebar (EditorContext& c) : ctx (c)
         s.setRange (lo, hi, step);
         s.setTextValueSuffix (suffix);
         s.setName (u8 (name));
+        s.onDragStart = [this] { ctx.beginGesture(); };
+        s.onDragEnd = [this] { ctx.endGesture(); };
         addAndMakeVisible (s);
         l.setText (u8 (name), juce::dontSendNotification);
         l.setFont (theme::font (12.0f, true));
@@ -275,13 +277,21 @@ void ProSidebar::refresh()
     presetTag = ! has ? juce::String() : count > 1 ? juce::String (count) + u8 (" repeticiones") : u8 ("Repetici\xc3\xb3n ") + juce::String (p->number);
     presetName = u8 ("Sin preset");
     presetDesc = has ? u8 ("Ajustes propios de la repetici\xc3\xb3n") : u8 ("Selecciona una repetici\xc3\xb3n");
-    if (has)
-        for (const auto& e : allPresets())
-            if (p->creativePreset == e.id)
-            {
-                presetName = e.name;
-                presetDesc = e.description;
-            }
+    if (has && p->creativePreset.isNotEmpty())
+    {
+        if (const auto* up = UserPresetStore::shared().find (p->creativePreset))
+        {
+            presetName = up->name;
+            presetDesc = up->description;
+        }
+        else
+            for (const auto& cp : pointPresets())
+                if (p->creativePreset == cp.id)
+                {
+                    presetName = u8 (cp.name);
+                    presetDesc = u8 (cp.description);
+                }
+    }
     const bool fav = has && UserPresetStore::shared().isFavourite (p->creativePreset);
     favButton.setButtonText (fav ? u8 ("\xe2\x98\x85") : u8 ("\xe2\x98\x86"));
     favButton.setColour (juce::TextButton::textColourOffId, fav ? theme::amber : theme::textDim);

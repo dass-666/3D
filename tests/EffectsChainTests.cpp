@@ -633,13 +633,21 @@ double stressRun (double sr, int block, double seconds, bool print)
     const int total = (int) (seconds * sr);
     float peak = 0.0f;
     double worstBlock = 0.0;
+    int worstIndex = -1, index = 0;
+    std::vector<double> times;
     const auto t0 = std::chrono::steady_clock::now();
-    for (int done = 0; done < total; done += block)
+    for (int done = 0; done < total; done += block, ++index)
     {
         buf.clear();
         const auto b0 = std::chrono::steady_clock::now();
         p.processBlock (buf, midi);
-        worstBlock = std::max (worstBlock, std::chrono::duration<double> (std::chrono::steady_clock::now() - b0).count());
+        const double t = std::chrono::duration<double> (std::chrono::steady_clock::now() - b0).count();
+        times.push_back (t);
+        if (t > worstBlock)
+        {
+            worstBlock = t;
+            worstIndex = index;
+        }
         peak = std::max (peak, buf.getMagnitude (0, block));
         for (int i = 0; i < block; i += 97)
             REQUIRE (std::isfinite (buf.getSample (0, i)));
@@ -647,9 +655,16 @@ double stressRun (double sr, int block, double seconds, bool print)
     const double wall = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
     const double blockSeconds = block / sr;
     if (print)
-        std::printf ("stress %.0f Hz block %d: %.2f s audio in %.3f s wall (%.1f %% of real time), worst block %.2f ms of %.2f ms, peak %.2f dBFS, voices %d\n",
-                     sr, block, seconds, wall, 100.0 * wall / seconds, worstBlock * 1000.0, blockSeconds * 1000.0,
-                     juce::Decibels::gainToDecibels (peak), p.getHostSnapshot().activeVoices.load());
+    {
+        std::vector<double> sorted (times);
+        std::sort (sorted.begin(), sorted.end());
+        std::printf ("stress %.0f Hz block %d: %.2f s audio in %.3f s wall (%.1f %% of real time), worst block %.2f ms (#%d of %d) of %.2f ms, p99 %.2f ms, median %.3f ms, peak %.2f dBFS\n",
+                     sr, block, seconds, wall, 100.0 * wall / seconds, worstBlock * 1000.0, worstIndex, (int) times.size(), blockSeconds * 1000.0,
+                     sorted[(size_t) (sorted.size() * 0.99)] * 1000.0, sorted[sorted.size() / 2] * 1000.0, juce::Decibels::gainToDecibels (peak));
+        for (int i = 0; i < (int) times.size(); ++i)
+            if (times[(size_t) i] > blockSeconds * 0.5)
+                std::printf ("   block #%d: %.2f ms\n", i, times[(size_t) i] * 1000.0);
+    }
     CHECK (peak <= 1.0f);  // limiter ceiling
     CHECK (peak > 0.05f);  // it did play
     return wall / seconds;
@@ -668,4 +683,46 @@ TEST_CASE ("Processor stress table (release build numbers)", "[.stress]")
     for (double sr : { 44100.0, 48000.0, 96000.0 })
         for (int block : { 64, 128, 256, 512, 1024 })
             stressRun (sr, block, 4.0, true);
+}
+
+TEST_CASE ("Chain reset is O(1) and still silences the delay history")
+{
+    const double sr = 96000.0;
+    PointFxChain chain;
+    chain.prepare (sr, 512);
+    PointEffects fx;
+    fx.delay.enabled = true;
+    fx.delay.sync = false;
+    fx.delay.timeMs = 500.0;
+    fx.delay.feedbackPercent = 0.0;
+    fx.delay.mixPercent = 100.0;
+    std::vector<float> l (512), r (512);
+    // A loud burst, then a second of silence so it sits in the delay line.
+    for (int i = 0; i < 512; ++i)
+        l[(size_t) i] = r[(size_t) i] = 0.9f;
+    chain.noteInput (0.9f, fx);
+    chain.process (fx, l.data(), r.data(), 512, 120.0);
+    for (int b = 0; b < 20; ++b)
+    {
+        std::fill (l.begin(), l.end(), 0.0f);
+        std::fill (r.begin(), r.end(), 0.0f);
+        chain.process (fx, l.data(), r.data(), 512, 120.0);
+    }
+    // Reset must be fast (no multi-megabyte clear) and the burst must be gone.
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int k = 0; k < 100; ++k)
+        chain.reset();
+    const double perReset = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() / 100.0;
+    INFO ("reset " << perReset * 1e6 << " us");
+    CHECK (perReset < 0.0005);
+    float peak = 0.0f;
+    for (int b = 0; b < 200; ++b)  // > 500 ms
+    {
+        std::fill (l.begin(), l.end(), 0.0f);
+        std::fill (r.begin(), r.end(), 0.0f);
+        chain.process (fx, l.data(), r.data(), 512, 120.0);
+        for (float v : l)
+            peak = std::max (peak, std::abs (v));
+    }
+    CHECK (peak < 1e-6f);
 }

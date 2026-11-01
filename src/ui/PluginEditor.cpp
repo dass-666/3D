@@ -22,6 +22,7 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     addChildComponent (curveEditor);
     curveEditor.onClose = [this] { showCurveEditor (false); };
     curveEditor.onExpand = [this] { showCurveEditor (true); };
+    curveEditor.onStateChanged = [this] { abButton.setEnabled (ctx.primaryPoint() != nullptr && curveEditor.hasStateB()); };
     pointPanel.onOpenCurveEditor = [this] { showCurveEditor (true); };
 
     // Pro layout: sidebar, centre tabs, bottom bar.
@@ -254,8 +255,9 @@ void SpatialEchoEditor::timerCallback()
 {
     ctx.refreshIfChanged();
     header.updateTransport();
+    const float outPeak = processor.takeOutputPeakDb();  // always drained, so no stale peak-hold when the meter appears
     if (meter.isVisible())
-        meter.push (processor.takeOutputPeakDb());
+        meter.push (outPeak);
     map.updateSounding();
     timeline.updatePlayhead();
     if (++timerTicks % 8 == 0)
