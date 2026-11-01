@@ -40,12 +40,19 @@ HeaderBar::HeaderBar (EditorContext& c) : ctx (c)
         juce::PopupMenu m;
         m.addItem (1, u8 ("Guardar escena\xe2\x80\xa6"));
         m.addItem (2, u8 ("Cargar escena\xe2\x80\xa6"));
+        m.addSeparator();
+        juce::PopupMenu size;
+        const int cur = ctx.processor.getUiScalePercent();
+        for (int pct : { 100, 125, 150 })
+            size.addItem (100 + pct, juce::String (pct) + " %", true, cur == pct);
+        m.addSubMenu (u8 ("Tama\xc3\xb1o de la interfaz"), size);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&sceneMenu),
                          [safe = juce::Component::SafePointer<HeaderBar> (this)] (int r)
                          {
                              if (safe == nullptr) return;
                              if (r == 1) safe->chooseSave();
                              if (r == 2) safe->chooseLoad();
+                             if (r >= 200 && safe->onScaleChange) safe->onScaleChange (r - 100);
                          });
     };
     addAndMakeVisible (sceneMenu);

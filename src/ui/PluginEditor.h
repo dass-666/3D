@@ -42,6 +42,7 @@ public:
     void setCenterView (CenterView);              // Pro only
     CenterView getCenterView() const noexcept { return centerView; }
     bool isProMode() const noexcept { return pro; }
+    void setUiScale (int percent);                // 100 / 125 / 150, saved with the project
 
 private:
     void timerCallback() override;

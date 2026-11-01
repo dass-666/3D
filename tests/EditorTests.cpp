@@ -456,6 +456,16 @@ TEST_CASE ("Pro layout: quick controls edit the generator, generate perfect cuts
     CHECK (q.getSceneForUi() == before);
     CHECK (q.getSceneForUi().points[0].creativePreset == before.points[0].creativePreset);
     CHECK (p.getSceneForUi() == before);
+
+    // Interface size: saved with the project, applied as the editor's scale factor.
+    ed.setUiScale (125);
+    CHECK (p.getUiScalePercent() == 125);
+    CHECK_THAT (ed.getTransform().getScaleFactor(), Catch::Matchers::WithinAbs (1.25f, 1e-5f));
+    p.getStateInformation (state);
+    SpatialEchoProcessor q2;
+    q2.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (q2.getUiScalePercent() == 125);
+    ed.setUiScale (100);
     snapshot (ed, "ui-pro-cuts.png");
 }
 

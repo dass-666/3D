@@ -17,6 +17,7 @@ public:
     void setProMode (bool);
 
     std::function<void (bool pro)> onModeChange;
+    std::function<void (int percent)> onScaleChange;
 
 private:
     void sceneChanged() override;

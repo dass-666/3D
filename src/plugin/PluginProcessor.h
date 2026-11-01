@@ -124,6 +124,9 @@ public:
 
     UiMode getUiMode() const noexcept { return uiMode.load(); }
     void setUiMode (UiMode m) noexcept { uiMode.store (m); }
+    // Interface size, saved with the project: 100, 125 or 150 %.
+    int getUiScalePercent() const noexcept { return uiScalePercent.load(); }
+    void setUiScalePercent (int p) noexcept { uiScalePercent.store (juce::jlimit (100, 150, p)); }
 
 private:
     void rebuildPlan();                   // caller must NOT hold documentLock
@@ -143,6 +146,7 @@ private:
     PitchRenderer pitchRenderer;
     std::atomic<double> currentBeat { 0.0 }, currentSeconds { 0.0 };
     std::atomic<UiMode> uiMode { UiMode::Easy };
+    std::atomic<int> uiScalePercent { 100 };
     bool lastTrigger = false;
     HostSnapshot hostSnapshot;
     DiagnosticLog diagnostics { hostSnapshot };

@@ -18,6 +18,7 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
         addAndMakeVisible (c);
 
     header.onModeChange = [this] (bool pro) { setProMode (pro); };
+    header.onScaleChange = [this] (int pct) { setUiScale (pct); };
     addChildComponent (curveEditor);
     curveEditor.onClose = [this] { showCurveEditor (false); };
     curveEditor.onExpand = [this] { showCurveEditor (true); };
@@ -133,6 +134,7 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     setResizable (true, true);
     setResizeLimits (1080, 790, 2000, 1400);
     setSize (1240, 840);
+    setScaleFactor (processor.getUiScalePercent() / 100.0f);
     setProMode (processor.getUiMode() == UiMode::Pro);
     refreshAudioInfo();
     refreshToolbar();
@@ -200,7 +202,19 @@ bool SpatialEchoEditor::keyPressed (const juce::KeyPress& k)
         ctx.redo();
         return true;
     }
+    if (pro && k.getModifiers().isCommandDown())
+    {
+        if (k.getKeyCode() == '1') { setCenterView (CenterView::Cuts); return true; }
+        if (k.getKeyCode() == '2') { setCenterView (CenterView::Map); return true; }
+        if (k.getKeyCode() == '3') { setCenterView (CenterView::Audio); return true; }
+    }
     return false;
+}
+
+void SpatialEchoEditor::setUiScale (int percent)
+{
+    processor.setUiScalePercent (percent);
+    setScaleFactor (processor.getUiScalePercent() / 100.0f);
 }
 
 void SpatialEchoEditor::stepPoint (int delta)

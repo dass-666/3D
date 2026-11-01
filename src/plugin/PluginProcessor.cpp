@@ -16,6 +16,7 @@ const juce::Identifier stateVersionAttr { "stateVersion" };
 const juce::Identifier documentTag { "SceneDocument" };
 const juce::Identifier diagnosticsAttr { "diagnostics" };
 const juce::Identifier uiModeAttr { "uiMode" };
+const juce::Identifier uiScaleAttr { "uiScale" };
 
 // File name without touching juce::File (relative paths assert there).
 juce::String fileNameOf (const juce::String& path)
@@ -478,6 +479,7 @@ void SpatialEchoProcessor::getStateInformation (juce::MemoryBlock& destData)
     root.setAttribute (stateVersionAttr, kStateVersion);
     root.setAttribute (diagnosticsAttr, diagnostics.isEnabled());
     root.setAttribute (uiModeAttr, getUiMode() == UiMode::Pro ? "pro" : "easy");
+    root.setAttribute (uiScaleAttr, getUiScalePercent());
 
     if (auto paramsXml = parameters.copyState().createXml())
         root.addChildElement (paramsXml.release());
@@ -512,6 +514,7 @@ void SpatialEchoProcessor::setStateInformation (const void* data, int sizeInByte
     }
     diagnostics.setEnabled (xml->getBoolAttribute (diagnosticsAttr, true));
     setUiMode (xml->getStringAttribute (uiModeAttr) == "pro" ? UiMode::Pro : UiMode::Easy);
+    setUiScalePercent (xml->getIntAttribute (uiScaleAttr, 100));
 
     if (auto* paramsXml = xml->getChildByName (parameters.state.getType()))
         parameters.replaceState (juce::ValueTree::fromXml (*paramsXml));
