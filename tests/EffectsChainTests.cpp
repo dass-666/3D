@@ -5,12 +5,14 @@
 #include "audio/EchoEngine.h"
 #include "audio/PitchRenderer.h"
 #include "model/Serialization.h"
+#include "plugin/PluginProcessor.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <set>
 
@@ -568,4 +570,102 @@ TEST_CASE ("Chain order: a permutation of cmdr is honoured (delay before charact
     const auto back = documentFromJson (toJson (d));
     REQUIRE (back);
     CHECK (back.value->scenes[0].points[0].effects.chainOrder == "rdmc");
+}
+
+// Worst case the UI allows: 16 repetitions, 256 cuts each, all four stages of
+// the chain on every one, stutter with acceleration, through the whole
+// processor (limiter, mix, state). Must keep up with real time with a wide
+// margin; the [.stress] variant prints the numbers for a release build.
+namespace
+{
+void stressScene (Scene& s)
+{
+    s.points.clear();
+    for (int i = 0; i < 16; ++i)
+    {
+        Point p;
+        p.id = "s" + juce::String (i);
+        p.number = i + 1;
+        p.timing.beat = 0.125 * i;
+        p.position = { 10.0 + 5.0 * i, 20.0 + 3.0 * i };
+        p.shaper.enabled = true;
+        p.shaper.cuts = limits::maxShaperCuts;
+        p.shaper.attackMs = 0.5;
+        p.shaper.releaseMs = 1.0;
+        p.shaper.autoLevel = true;
+        p.shaper.distribution = ShaperSettings::Distribution::Accelerating;
+        p.shaper.accelPercent = 60.0;
+        p.stutter.enabled = i % 4 == 0;
+        p.stutter.repeats = 16;
+        p.stutter.accelPercent = 80.0;
+        p.effects.character = { true, (CharacterSettings::Type) (i % 6), 70.0, 100.0 };
+        p.effects.modulation = { true, (ModulationSettings::Type) (i % 3), 2.0, 60.0, 50.0 };
+        p.effects.delay = { true, i % 2 == 0, 150.0, StutterSettings::Division::Sixteenth, 55.0, true, 8000.0, 50.0 };
+        p.effects.reverb = { true, (ReverbSettings::Type) (i % 3), 80.0, 80.0, 20.0, 40.0, 0.0 };
+        p.effects.chainOrder = i % 2 == 0 ? "cmdr" : "rdmc";
+        s.points.push_back (p);
+    }
+}
+
+juce::MemoryBlock voiceWav (double sr, double seconds)
+{
+    const auto a = vowel (sr, seconds);
+    juce::MemoryBlock block;
+    juce::WavAudioFormat wav;
+    auto* stream = new juce::MemoryOutputStream (block, false);
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (stream, sr, 1, 24, {}, 0));
+    w->writeFromAudioSampleBuffer (a, 0, a.getNumSamples());
+    w.reset();
+    return block;
+}
+
+double stressRun (double sr, int block, double seconds, bool print)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (sr, block);
+    REQUIRE (p.loadSourceBytes (voiceWav (sr, 1.0), "C:/stress.wav").wasOk());
+    p.editScene (stressScene);
+    REQUIRE (p.getSceneForUi().points.size() == 16);
+    p.requestPreview();
+    juce::AudioBuffer<float> buf (2, block);
+    juce::MidiBuffer midi;
+    const int total = (int) (seconds * sr);
+    float peak = 0.0f;
+    double worstBlock = 0.0;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int done = 0; done < total; done += block)
+    {
+        buf.clear();
+        const auto b0 = std::chrono::steady_clock::now();
+        p.processBlock (buf, midi);
+        worstBlock = std::max (worstBlock, std::chrono::duration<double> (std::chrono::steady_clock::now() - b0).count());
+        peak = std::max (peak, buf.getMagnitude (0, block));
+        for (int i = 0; i < block; i += 97)
+            REQUIRE (std::isfinite (buf.getSample (0, i)));
+    }
+    const double wall = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    const double blockSeconds = block / sr;
+    if (print)
+        std::printf ("stress %.0f Hz block %d: %.2f s audio in %.3f s wall (%.1f %% of real time), worst block %.2f ms of %.2f ms, peak %.2f dBFS, voices %d\n",
+                     sr, block, seconds, wall, 100.0 * wall / seconds, worstBlock * 1000.0, blockSeconds * 1000.0,
+                     juce::Decibels::gainToDecibels (peak), p.getHostSnapshot().activeVoices.load());
+    CHECK (peak <= 1.0f);  // limiter ceiling
+    CHECK (peak > 0.05f);  // it did play
+    return wall / seconds;
+}
+}  // namespace
+
+TEST_CASE ("Processor stress: 16 repetitions x 256 cuts x full chain keeps up with real time")
+{
+    const double load = stressRun (48000.0, 512, 4.0, false);
+    INFO ("load " << load);
+    CHECK (load < 0.6);  // debug build on CI; a release build is far below
+}
+
+TEST_CASE ("Processor stress table (release build numbers)", "[.stress]")
+{
+    for (double sr : { 44100.0, 48000.0, 96000.0 })
+        for (int block : { 64, 128, 256, 512, 1024 })
+            stressRun (sr, block, 4.0, true);
 }
