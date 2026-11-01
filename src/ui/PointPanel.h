@@ -40,9 +40,9 @@ private:
     juce::Component content;
 
     juce::Label title, presetNote, pendingNote, emptyNote, pitchStatus;
-    juce::ComboBox presetBox;
-    juce::Slider pitch, gain, posX, posY, beat, regionStart, regionEnd;
-    juce::Label pitchL, gainL, posXL, posYL, beatL, regionStartL, regionEndL, presetL, soundInfo;
+    juce::ComboBox presetBox, creativeBox;
+    juce::Slider pitch, formant, gain, posX, posY, beat, regionStart, regionEnd;
+    juce::Label pitchL, formantL, gainL, posXL, posYL, beatL, regionStartL, regionEndL, presetL, creativeL, soundInfo;
     bool freeTime = false;
     juce::TextButton triggerButton { "Disparar esta" };
     juce::ToggleButton enabledToggle { "Activa" }, soloToggle { "Solo" };
@@ -60,6 +60,16 @@ private:
     juce::Label effectsTitle, effectsNote, fadeInL, fadeOutL, lowpassL, highpassL;
     juce::Slider fadeIn, fadeOut, lowpass, highpass;
     juce::ToggleButton reverseToggle { juce::String::fromUTF8 ("Reverse (al rev\xc3\xa9s)") };
+    // Effect chain (character -> modulation -> delay -> reverb)
+    juce::Label charTitle, modTitle, delayTitle, reverbTitle, chainNote;
+    juce::ToggleButton charToggle { "Activar" }, modToggle { "Activar" }, delayToggle { "Activar" }, reverbToggle { "Activar" },
+                       delaySyncToggle { "Sincronizar al BPM" }, pingPongToggle { "Ping-pong" };
+    juce::ComboBox charTypeBox, modTypeBox, delayDivisionBox, reverbTypeBox;
+    juce::Slider charAmount, charMix, modRate, modDepth, modMix, delayTime, delayFeedback, delayLowpass, delayMix,
+                 reverbSize, reverbDecay, reverbPredelay, reverbMix, reverbOutput;
+    juce::Label charTypeL, charAmountL, charMixL, modTypeL, modRateL, modDepthL, modMixL, delayTimeL, delayDivisionL,
+                delayFeedbackL, delayLowpassL, delayMixL, reverbTypeL, reverbSizeL, reverbDecayL, reverbPredelayL,
+                reverbMixL, reverbOutputL;
 
     // Volume Shaper
     juce::Label shaperTitle, shaperNote;

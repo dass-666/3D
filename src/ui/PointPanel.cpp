@@ -14,6 +14,15 @@ constexpr StutterSettings::Region kRegions[] { StutterSettings::Region::Whole, S
 const char* kRegionNames[] { "Fragmento completo", "Inicio", "Final", "Selecci\xc3\xb3n manual" };
 constexpr StutterSettings::Division kDivisions[] { StutterSettings::Division::Quarter, StutterSettings::Division::Eighth,
                                                    StutterSettings::Division::Sixteenth, StutterSettings::Division::ThirtySecond };
+constexpr CharacterSettings::Type kCharTypes[] { CharacterSettings::Type::Saturation, CharacterSettings::Type::Overdrive,
+                                                 CharacterSettings::Type::Bitcrusher, CharacterSettings::Type::Telephone,
+                                                 CharacterSettings::Type::LoFi, CharacterSettings::Type::Robot };
+const char* kCharNames[] { "Saturaci\xc3\xb3n suave", "Overdrive", "Bitcrusher", "Tel\xc3\xa9" "fono", "Lo-fi", "Robot (anillo)" };
+constexpr ModulationSettings::Type kModTypes[] { ModulationSettings::Type::Chorus, ModulationSettings::Type::Flanger,
+                                                 ModulationSettings::Type::Tremolo };
+const char* kModNames[] { "Chorus", "Flanger", "Tr\xc3\xa9molo" };
+constexpr ReverbSettings::Type kReverbTypes[] { ReverbSettings::Type::Room, ReverbSettings::Type::Hall, ReverbSettings::Type::Plate };
+const char* kReverbNames[] { "Sala (room)", "Hall", "Plate" };
 constexpr ShaperSettings::Distribution kDists[] { ShaperSettings::Distribution::Uniform, ShaperSettings::Distribution::Accelerating,
                                                   ShaperSettings::Distribution::Decelerating };
 const char* kDistNames[] { "Uniforme", "Acelerando", "Desacelerando" };
@@ -52,7 +61,7 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     content.addAndMakeVisible (presetL);
     int id = 1;
     for (auto& p : builtInVoicePresets())
-        presetBox.addItem (p.name + (p.needsFutureProcessing ? u8 ("  (tono s\xc3\xb3lo)") : juce::String()), id++);
+        presetBox.addItem (p.name, id++);
     presetBox.onChange = [this]
     {
         const int idx = presetBox.getSelectedItemIndex();
@@ -68,9 +77,36 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     presetNote.setColour (juce::Label::textColourId, theme::textDim);
     content.addAndMakeVisible (presetNote);
 
+    // Creative presets: a whole recipe (sound, curve and/or effect chain) for the selection.
+    creativeL.setText ("Preset creativo", juce::dontSendNotification);
+    creativeL.setFont (theme::font (12.5f));
+    creativeL.setColour (juce::Label::textColourId, theme::textDim);
+    content.addAndMakeVisible (creativeL);
+    creativeBox.setTextWhenNothingSelected (u8 ("Elegir\xe2\x80\xa6"));
+    {
+        int cid = 1;
+        for (auto& cp : pointPresets())
+            creativeBox.addItem (u8 (cp.name), cid++);
+    }
+    creativeBox.setTooltip (u8 ("Aplica cortes, efectos y/o voz a las repeticiones seleccionadas. Todo con procesamiento real."));
+    creativeBox.onChange = [this]
+    {
+        const int idx = creativeBox.getSelectedItemIndex();
+        const auto& presets = pointPresets();
+        if (idx < 0 || idx >= (int) presets.size())
+            return;
+        editSelection ([&preset = presets[(size_t) idx]] (Scene&, Point& p) { applyPointPreset (p, preset); });
+        creativeBox.setSelectedId (0, juce::dontSendNotification);
+    };
+    content.addAndMakeVisible (creativeBox);
+
     setupSlider (pitch, pitchL, "Pitch", -24, 24, 1, " st");
     pitch.setDoubleClickReturnValue (true, 0.0);
     pitch.onValueChange = [this] { editSelection ([v = pitch.getValue()] (Scene& s, Point& p) { auto snd = p.sound; snd.pitchSemitones = v; setSound (s, p.id, snd); }); };
+    setupSlider (formant, formantL, "Formantes", limits::minFormant, limits::maxFormant, 0.5, " st");
+    formant.setDoubleClickReturnValue (true, 0.0);
+    formant.setTooltip (u8 ("Mueve el timbre (formantes) sin cambiar el tono: abajo = voz m\xc3\xa1s grande, arriba = m\xc3\xa1s fina. Se pre-renderiza."));
+    formant.onValueChange = [this] { editSelection ([v = formant.getValue()] (Scene& s, Point& p) { auto snd = p.sound; snd.formantSemitones = v; setSound (s, p.id, snd); }); };
     pitchStatus.setFont (theme::font (11.0f, true));
     pitchStatus.setColour (juce::Label::textColourId, theme::amber);
     pitchStatus.setJustificationType (juce::Justification::centredRight);
@@ -201,10 +237,96 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     highpass.onValueChange = [this] { editPrimary ([v = highpass.getValue()] (Scene& s, Point& p) { auto e = p.effects; e.highpassHz = v; setEffects (s, p.id, e); }); };
     reverseToggle.onClick = [this] { editPrimary ([on = reverseToggle.getToggleState()] (Scene& s, Point& p) { auto e = p.effects; e.reverse = on; setEffects (s, p.id, e); }); };
     content.addAndMakeVisible (reverseToggle);
-    effectsNote.setText (u8 ("Gate = Volume Shaper. Delay, reverb, modulaci\xc3\xb3n y formantes: pr\xc3\xb3ximamente."), juce::dontSendNotification);
+    effectsNote.setText (u8 ("Gate = Volume Shaper (abajo). Cadena por repetici\xc3\xb3n, en este orden: car\xc3\xa1" "cter \xe2\x86\x92 modulaci\xc3\xb3n \xe2\x86\x92 delay \xe2\x86\x92 reverb."), juce::dontSendNotification);
     effectsNote.setFont (theme::font (11.0f));
     effectsNote.setColour (juce::Label::textColourId, theme::textFaint);
     content.addAndMakeVisible (effectsNote);
+
+    auto fxTitle = [this] (juce::Label& l, const char* text, juce::ToggleButton& t)
+    {
+        l.setText (u8 (text), juce::dontSendNotification);
+        l.setFont (theme::font (11.5f, true));
+        l.setColour (juce::Label::textColourId, theme::textDim);
+        content.addAndMakeVisible (l);
+        content.addAndMakeVisible (t);
+    };
+    auto fxCombo = [this] (juce::ComboBox& b, juce::Label& l, const char* text, const char* const* names, int count)
+    {
+        l.setText (u8 (text), juce::dontSendNotification);
+        l.setFont (theme::font (12.5f));
+        l.setColour (juce::Label::textColourId, theme::textDim);
+        content.addAndMakeVisible (l);
+        for (int i = 0; i < count; ++i)
+            b.addItem (u8 (names[i]), i + 1);
+        content.addAndMakeVisible (b);
+    };
+    auto fxEdit = [this] (auto fn) { return [this, fn] { editPrimary ([fn] (Scene& s, Point& p) { auto e = p.effects; fn (e); setEffects (s, p.id, e); }); }; };
+
+    // Character
+    fxTitle (charTitle, "CAR\xc3\x81" "CTER / DISTORSI\xc3\x93N", charToggle);
+    charToggle.onClick = [this, fxEdit] { fxEdit ([on = charToggle.getToggleState()] (PointEffects& e) { e.character.enabled = on; })(); };
+    fxCombo (charTypeBox, charTypeL, "Tipo", kCharNames, (int) std::size (kCharNames));
+    charTypeBox.onChange = [this, fxEdit] { if (const int i = charTypeBox.getSelectedItemIndex(); i >= 0) fxEdit ([t = kCharTypes[i]] (PointEffects& e) { e.character.type = t; })(); };
+    setupSlider (charAmount, charAmountL, "Cantidad", 0, 100, 1, " %");
+    setupSlider (charMix, charMixL, "Mezcla", 0, 100, 1, " %");
+    charAmount.setTooltip (u8 ("Drive / resoluci\xc3\xb3n / frecuencia de la portadora (Robot: 20\xe2\x80\x93" "220 Hz)"));
+    charAmount.onValueChange = [this, fxEdit] { fxEdit ([v = charAmount.getValue()] (PointEffects& e) { e.character.amountPercent = v; })(); };
+    charMix.onValueChange = [this, fxEdit] { fxEdit ([v = charMix.getValue()] (PointEffects& e) { e.character.mixPercent = v; })(); };
+
+    // Modulation
+    fxTitle (modTitle, "MODULACI\xc3\x93N", modToggle);
+    modToggle.onClick = [this, fxEdit] { fxEdit ([on = modToggle.getToggleState()] (PointEffects& e) { e.modulation.enabled = on; })(); };
+    fxCombo (modTypeBox, modTypeL, "Tipo", kModNames, (int) std::size (kModNames));
+    modTypeBox.onChange = [this, fxEdit] { if (const int i = modTypeBox.getSelectedItemIndex(); i >= 0) fxEdit ([t = kModTypes[i]] (PointEffects& e) { e.modulation.type = t; })(); };
+    setupSlider (modRate, modRateL, "Velocidad", 0.05, 20, 0.05, " Hz");
+    modRate.setSkewFactorFromMidPoint (2.0);
+    setupSlider (modDepth, modDepthL, "Profundidad", 0, 100, 1, " %");
+    setupSlider (modMix, modMixL, "Mezcla", 0, 100, 1, " %");
+    modRate.onValueChange = [this, fxEdit] { fxEdit ([v = modRate.getValue()] (PointEffects& e) { e.modulation.rateHz = v; })(); };
+    modDepth.onValueChange = [this, fxEdit] { fxEdit ([v = modDepth.getValue()] (PointEffects& e) { e.modulation.depthPercent = v; })(); };
+    modMix.onValueChange = [this, fxEdit] { fxEdit ([v = modMix.getValue()] (PointEffects& e) { e.modulation.mixPercent = v; })(); };
+
+    // Delay
+    fxTitle (delayTitle, "DELAY", delayToggle);
+    delayToggle.onClick = [this, fxEdit] { fxEdit ([on = delayToggle.getToggleState()] (PointEffects& e) { e.delay.enabled = on; })(); };
+    delaySyncToggle.onClick = [this, fxEdit] { fxEdit ([on = delaySyncToggle.getToggleState()] (PointEffects& e) { e.delay.sync = on; })(); };
+    content.addAndMakeVisible (delaySyncToggle);
+    setupSlider (delayTime, delayTimeL, "Tiempo", 1, limits::maxDelayMs, 1, " ms");
+    delayTime.setSkewFactorFromMidPoint (250.0);
+    fxCombo (delayDivisionBox, delayDivisionL, "Divisi\xc3\xb3n", nullptr, 0);
+    for (int i = 0; i < (int) std::size (kDivisions); ++i)
+        delayDivisionBox.addItem (toString (kDivisions[i]), i + 1);
+    delayDivisionBox.onChange = [this, fxEdit] { if (const int i = delayDivisionBox.getSelectedItemIndex(); i >= 0) fxEdit ([d = kDivisions[i]] (PointEffects& e) { e.delay.division = d; })(); };
+    setupSlider (delayFeedback, delayFeedbackL, "Feedback", 0, 95, 1, " %");
+    pingPongToggle.onClick = [this, fxEdit] { fxEdit ([on = pingPongToggle.getToggleState()] (PointEffects& e) { e.delay.pingPong = on; })(); };
+    content.addAndMakeVisible (pingPongToggle);
+    setupSlider (delayLowpass, delayLowpassL, "Filtro (LP)", 500, 20000, 10, " Hz");
+    delayLowpass.setSkewFactorFromMidPoint (4000.0);
+    setupSlider (delayMix, delayMixL, "Mezcla", 0, 100, 1, " %");
+    delayTime.onValueChange = [this, fxEdit] { fxEdit ([v = delayTime.getValue()] (PointEffects& e) { e.delay.timeMs = v; })(); };
+    delayFeedback.onValueChange = [this, fxEdit] { fxEdit ([v = delayFeedback.getValue()] (PointEffects& e) { e.delay.feedbackPercent = v; })(); };
+    delayLowpass.onValueChange = [this, fxEdit] { fxEdit ([v = delayLowpass.getValue()] (PointEffects& e) { e.delay.lowpassHz = v; })(); };
+    delayMix.onValueChange = [this, fxEdit] { fxEdit ([v = delayMix.getValue()] (PointEffects& e) { e.delay.mixPercent = v; })(); };
+
+    // Reverb
+    fxTitle (reverbTitle, "REVERB", reverbToggle);
+    reverbToggle.onClick = [this, fxEdit] { fxEdit ([on = reverbToggle.getToggleState()] (PointEffects& e) { e.reverb.enabled = on; })(); };
+    fxCombo (reverbTypeBox, reverbTypeL, "Tipo", kReverbNames, (int) std::size (kReverbNames));
+    reverbTypeBox.onChange = [this, fxEdit] { if (const int i = reverbTypeBox.getSelectedItemIndex(); i >= 0) fxEdit ([t = kReverbTypes[i]] (PointEffects& e) { e.reverb.type = t; })(); };
+    setupSlider (reverbSize, reverbSizeL, u8 ("Tama\xc3\xb1o"), 0, 100, 1, " %");
+    setupSlider (reverbDecay, reverbDecayL, "Decay", 0, 100, 1, " %");
+    setupSlider (reverbPredelay, reverbPredelayL, "Predelay", 0, limits::maxPredelayMs, 1, " ms");
+    setupSlider (reverbMix, reverbMixL, "Mezcla", 0, 100, 1, " %");
+    setupSlider (reverbOutput, reverbOutputL, "Salida", -24, 6, 0.5, " dB");
+    reverbSize.onValueChange = [this, fxEdit] { fxEdit ([v = reverbSize.getValue()] (PointEffects& e) { e.reverb.sizePercent = v; })(); };
+    reverbDecay.onValueChange = [this, fxEdit] { fxEdit ([v = reverbDecay.getValue()] (PointEffects& e) { e.reverb.decayPercent = v; })(); };
+    reverbPredelay.onValueChange = [this, fxEdit] { fxEdit ([v = reverbPredelay.getValue()] (PointEffects& e) { e.reverb.predelayMs = v; })(); };
+    reverbMix.onValueChange = [this, fxEdit] { fxEdit ([v = reverbMix.getValue()] (PointEffects& e) { e.reverb.mixPercent = v; })(); };
+    reverbOutput.onValueChange = [this, fxEdit] { fxEdit ([v = reverbOutput.getValue()] (PointEffects& e) { e.reverb.outputDb = v; })(); };
+    chainNote.setText (u8 ("Hasta 16 repeticiones con cadena a la vez; las dem\xc3\xa1s suenan sin efectos. Las colas siguen al editar."), juce::dontSendNotification);
+    chainNote.setFont (theme::font (11.0f));
+    chainNote.setColour (juce::Label::textColourId, theme::textFaint);
+    content.addAndMakeVisible (chainNote);
 
     // ---- Volume Shaper
     shaperTitle.setText ("VOLUME SHAPER / CORTES", juce::dontSendNotification);
@@ -339,10 +461,8 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     soundInfo.setFont (theme::font (12.0f, true));
     soundInfo.setColour (juce::Label::textColourId, theme::textDim);
     content.addAndMakeVisible (soundInfo);
-    pendingNote.setText (u8 ("Car\xc3\xa1" "cter y velocidad: PR\xc3\x93XIMAMENTE. Se guardan; a\xc3\xban no suenan."), juce::dontSendNotification);
-    pendingNote.setFont (theme::font (11.0f));
-    pendingNote.setColour (juce::Label::textColourId, theme::textFaint);
-    content.addAndMakeVisible (pendingNote);
+    soundInfo.setVisible (false);   // legacy stored values (character/speed): not processed, not shown
+    pendingNote.setVisible (false);
 
     emptyNote.setText (u8 ("Selecciona una repetici\xc3\xb3n en el mapa o en la l\xc3\xadnea temporal.\n\n"
                            "Doble clic en el mapa: a\xc3\xb1" "adir.  Shift+clic: selecci\xc3\xb3n m\xc3\xbaltiple."),
@@ -463,10 +583,7 @@ void PointPanel::refresh()
         presetBox.setText (p->voice.presetName.isNotEmpty() ? p->voice.presetName : "Original", juce::dontSendNotification);
 
     juce::String note = count > 1 ? u8 ("Preset y pitch se aplican a las ") + juce::String (count) + " seleccionadas. " : juce::String();
-    if (presetIndex >= 0 && presets[(size_t) presetIndex].needsFutureProcessing)
-        note << u8 ("Este preset s\xc3\xb3lo aplica su tono por ahora; su car\xc3\xa1" "cter llega m\xc3\xa1s adelante.");
-    else
-        note << u8 ("El preset es un punto de partida: ajusta el pitch libremente.");
+    note << u8 ("Punto de partida: ajusta pitch y formantes libremente.");
     if (p->voice.modified)
         note = "(modificado) " + note;
     presetNote.setText (note, juce::dontSendNotification);
@@ -477,6 +594,7 @@ void PointPanel::refresh()
             s.setValue (v, juce::dontSendNotification);
     };
     setIfIdle (pitch, p->sound.pitchSemitones);
+    setIfIdle (formant, p->sound.formantSemitones);
     setIfIdle (gain, p->gainDb);
     setIfIdle (posX, p->position.x);
     setIfIdle (posY, p->position.y);
@@ -517,6 +635,48 @@ void PointPanel::refresh()
     setIfIdle (lowpass, fx.lowpassHz);
     setIfIdle (highpass, fx.highpassHz);
     reverseToggle.setToggleState (fx.reverse, juce::dontSendNotification);
+    charToggle.setToggleState (fx.character.enabled, juce::dontSendNotification);
+    modToggle.setToggleState (fx.modulation.enabled, juce::dontSendNotification);
+    delayToggle.setToggleState (fx.delay.enabled, juce::dontSendNotification);
+    reverbToggle.setToggleState (fx.reverb.enabled, juce::dontSendNotification);
+    delaySyncToggle.setToggleState (fx.delay.sync, juce::dontSendNotification);
+    pingPongToggle.setToggleState (fx.delay.pingPong, juce::dontSendNotification);
+    for (int i = 0; i < (int) std::size (kCharTypes); ++i)
+        if (kCharTypes[i] == fx.character.type)
+            charTypeBox.setSelectedItemIndex (i, juce::dontSendNotification);
+    for (int i = 0; i < (int) std::size (kModTypes); ++i)
+        if (kModTypes[i] == fx.modulation.type)
+            modTypeBox.setSelectedItemIndex (i, juce::dontSendNotification);
+    for (int i = 0; i < (int) std::size (kReverbTypes); ++i)
+        if (kReverbTypes[i] == fx.reverb.type)
+            reverbTypeBox.setSelectedItemIndex (i, juce::dontSendNotification);
+    for (int i = 0; i < (int) std::size (kDivisions); ++i)
+        if (kDivisions[i] == fx.delay.division)
+            delayDivisionBox.setSelectedItemIndex (i, juce::dontSendNotification);
+    setIfIdle (charAmount, fx.character.amountPercent);
+    setIfIdle (charMix, fx.character.mixPercent);
+    setIfIdle (modRate, fx.modulation.rateHz);
+    setIfIdle (modDepth, fx.modulation.depthPercent);
+    setIfIdle (modMix, fx.modulation.mixPercent);
+    setIfIdle (delayTime, fx.delay.timeMs);
+    setIfIdle (delayFeedback, fx.delay.feedbackPercent);
+    setIfIdle (delayLowpass, fx.delay.lowpassHz);
+    setIfIdle (delayMix, fx.delay.mixPercent);
+    setIfIdle (reverbSize, fx.reverb.sizePercent);
+    setIfIdle (reverbDecay, fx.reverb.decayPercent);
+    setIfIdle (reverbPredelay, fx.reverb.predelayMs);
+    setIfIdle (reverbMix, fx.reverb.mixPercent);
+    setIfIdle (reverbOutput, fx.reverb.outputDb);
+    for (auto* c : std::initializer_list<juce::Component*> { &charTypeBox, &charAmount, &charMix })
+        c->setEnabled (fx.character.enabled);
+    for (auto* c : std::initializer_list<juce::Component*> { &modTypeBox, &modRate, &modDepth, &modMix })
+        c->setEnabled (fx.modulation.enabled);
+    for (auto* c : std::initializer_list<juce::Component*> { &delaySyncToggle, &delayTime, &delayDivisionBox, &delayFeedback,
+                                                             &pingPongToggle, &delayLowpass, &delayMix })
+        c->setEnabled (fx.delay.enabled);
+    for (auto* c : std::initializer_list<juce::Component*> { &reverbTypeBox, &reverbSize, &reverbDecay, &reverbPredelay,
+                                                             &reverbMix, &reverbOutput })
+        c->setEnabled (fx.reverb.enabled);
 
     const auto& sh = p->shaper;
     shaperToggle.setToggleState (sh.enabled, juce::dontSendNotification);
@@ -633,6 +793,7 @@ int PointPanel::layoutContent (int width)
 
     labelled (presetL, presetBox);
     presetNote.setBounds (row (28).withTrimmedLeft (104));
+    labelled (creativeL, creativeBox);
     {
         auto x = row (27);
         pitchL.setBounds (x.removeFromLeft (104));
@@ -640,6 +801,7 @@ int PointPanel::layoutContent (int width)
         pitch.setBounds (x);
         pitchStatus.setBounds (pitch.getBounds().withTrimmedRight (70).removeFromRight (120).translated (0, -11).withHeight (12));
     }
+    labelled (formantL, formant);
     labelled (gainL, gain);
     labelled (posXL, posX);
     labelled (posYL, posY);
@@ -682,6 +844,41 @@ int PointPanel::layoutContent (int width)
     labelled (highpassL, highpass);
     effectsNote.setBounds (row (16));
 
+    auto fxHead = [&] (juce::Label& l, juce::ToggleButton& t)
+    {
+        r.removeFromTop (6);
+        auto h = row (24);
+        t.setBounds (h.removeFromRight (96));
+        l.setBounds (h);
+    };
+    const auto* pt = ctx.primaryPoint();
+    const PointEffects fxNow = pt != nullptr ? pt->effects : PointEffects {};
+    fxHead (charTitle, charToggle);
+    labelled (charTypeL, charTypeBox);
+    labelled (charAmountL, charAmount);
+    labelled (charMixL, charMix, pro);
+    fxHead (modTitle, modToggle);
+    labelled (modTypeL, modTypeBox);
+    labelled (modRateL, modRate);
+    labelled (modDepthL, modDepth);
+    labelled (modMixL, modMix, pro && fxNow.modulation.type != ModulationSettings::Type::Tremolo);
+    fxHead (delayTitle, delayToggle);
+    delaySyncToggle.setBounds (row (24));
+    labelled (delayTimeL, delayTime, ! fxNow.delay.sync);
+    labelled (delayDivisionL, delayDivisionBox, fxNow.delay.sync);
+    labelled (delayFeedbackL, delayFeedback);
+    pingPongToggle.setBounds (row (24));
+    labelled (delayLowpassL, delayLowpass, pro);
+    labelled (delayMixL, delayMix);
+    fxHead (reverbTitle, reverbToggle);
+    labelled (reverbTypeL, reverbTypeBox);
+    labelled (reverbSizeL, reverbSize);
+    labelled (reverbDecayL, reverbDecay);
+    labelled (reverbPredelayL, reverbPredelay, pro);
+    labelled (reverbMixL, reverbMix);
+    labelled (reverbOutputL, reverbOutput, pro);
+    chainNote.setBounds (row (16));
+
     r.removeFromTop (8);
     auto shh = row (24);
     shaperToggle.setBounds (shh.removeFromRight (96));
@@ -714,8 +911,6 @@ int PointPanel::layoutContent (int width)
     shaperNote.setBounds (row (30));
 
     r.removeFromTop (6);
-    soundInfo.setBounds (row (18));
-    pendingNote.setBounds (row (16));
     return r.getY();
 }
 
