@@ -86,6 +86,8 @@ namespace limits
     inline constexpr double minShaperRampMs = 0.1, maxShaperAttackMs = 50.0, maxShaperReleaseMs = 200.0;
     inline constexpr double maxShaperMakeupDb = 12.0, maxShaperAutoLevelDb = 6.0;
     inline constexpr int minShaperCurvePoints = 2, maxShaperCurvePoints = 512;
+    inline constexpr int maxCutBlocks = 256;
+    inline constexpr double minCutBlockMs = 2.0;
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
     inline constexpr double minFormant = -12.0, maxFormant = 12.0;
     inline constexpr double maxDelayMs = 2000.0, maxPredelayMs = 200.0;
@@ -161,6 +163,16 @@ struct CurvePoint
     bool operator== (const CurvePoint&) const = default;
 };
 
+// «Editar cortes»: one opening of a manual cut pattern, in milliseconds from
+// the start of the shaped span (so a tempo change never moves it). Between
+// openings the gain stays at the closed level (1 - depth).
+struct CutBlock
+{
+    double startMs = 0.0, endMs = 100.0;
+    double level = 1.0;  // 0..1, gain while open
+    bool operator== (const CutBlock&) const = default;
+};
+
 struct ShaperSettings
 {
     enum class Shape { Square, Triangle, Saw };
@@ -190,6 +202,11 @@ struct ShaperSettings
     // region and lengthMs still apply). Sorted by t, 2..512 points.
     bool custom = false;
     std::vector<CurvePoint> curve;
+    // Which manual representation drives the curve when `custom` is true. Both
+    // are kept, so switching tools never loses the other one's edits.
+    enum class ManualKind { Points, Cuts };
+    ManualKind manualKind = ManualKind::Points;
+    std::vector<CutBlock> blocks;  // sorted, non-overlapping, at most limits::maxCutBlocks
     bool operator== (const ShaperSettings&) const = default;
 };
 
@@ -204,6 +221,13 @@ ShaperSettings clamped (ShaperSettings);
 // points (bakeCurve, which turns the generated shape into points, lives in
 // audio/EchoEngine.h next to shaperGain).
 std::vector<CurvePoint> normalisedCurve (std::vector<CurvePoint>);
+// Sorted, finite, at least limits::minCutBlockMs long, no overlaps (a later
+// opening starts where the previous one ends), at most limits::maxCutBlocks.
+std::vector<CutBlock> normalisedBlocks (std::vector<CutBlock>);
+// Gain of a cut pattern `ms` after the start of the shaped span: closed level
+// between openings, linear attack/release ramps inside each opening (shortened
+// to half the opening when it is shorter than both).
+double blocksGainAt (const ShaperSettings&, double ms) noexcept;
 // Curve value at t (0..1), linear between breakpoints; 1 if fewer than 2 points.
 double curveGainAt (const std::vector<CurvePoint>&, double t) noexcept;
 // Shortest cut (seconds) the curve can represent usefully: attack + release + 1 ms.

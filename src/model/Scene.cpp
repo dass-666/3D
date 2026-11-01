@@ -160,9 +160,55 @@ ShaperSettings clamped (ShaperSettings s)
             pat << (c == '.' ? '.' : 'x');
     s.pattern = pat.containsChar ('.') ? pat : juce::String();  // all open = no pattern
     s.curve = normalisedCurve (std::move (s.curve));
-    if ((int) s.curve.size() < limits::minShaperCurvePoints)
+    s.blocks = normalisedBlocks (std::move (s.blocks));
+    if (s.manualKind == ShaperSettings::ManualKind::Points && (int) s.curve.size() < limits::minShaperCurvePoints)
         s.custom = false;
     return s;
+}
+
+std::vector<CutBlock> normalisedBlocks (std::vector<CutBlock> in)
+{
+    std::vector<CutBlock> c;
+    for (auto b : in)
+    {
+        if (! std::isfinite (b.startMs) || ! std::isfinite (b.endMs))
+            continue;
+        b.startMs = std::clamp (b.startMs, 0.0, 600000.0);
+        b.endMs = std::clamp (b.endMs, b.startMs, 600000.0);
+        b.level = std::isfinite (b.level) ? std::clamp (b.level, 0.0, 1.0) : 1.0;
+        c.push_back (b);
+    }
+    std::stable_sort (c.begin(), c.end(), [] (const CutBlock& a, const CutBlock& b) { return a.startMs < b.startMs; });
+    std::vector<CutBlock> out;
+    for (auto b : c)
+    {
+        if (! out.empty())
+            b.startMs = std::max (b.startMs, out.back().endMs);
+        if (b.endMs - b.startMs < limits::minCutBlockMs - 1.0e-9)
+            continue;
+        if ((int) out.size() >= limits::maxCutBlocks)
+            break;
+        out.push_back (b);
+    }
+    return out;
+}
+
+double blocksGainAt (const ShaperSettings& sh, double ms) noexcept
+{
+    const double closed = 1.0 - std::clamp (sh.depthPercent, 0.0, 100.0) / 100.0;
+    const auto& bl = sh.blocks;
+    // Last opening that starts at or before `ms`.
+    auto it = std::upper_bound (bl.begin(), bl.end(), ms, [] (double v, const CutBlock& b) { return v < b.startMs; });
+    if (it == bl.begin())
+        return closed;
+    const auto& b = *(it - 1);
+    if (ms >= b.endMs)
+        return closed;
+    const double len = b.endMs - b.startMs;
+    const double atk = std::max (0.01, std::min (sh.attackMs, len * 0.5));
+    const double rel = std::max (0.01, std::min (sh.releaseMs, len * 0.5));
+    const double env = std::min ({ 1.0, (ms - b.startMs) / atk, (b.endMs - ms) / rel });
+    return closed + (b.level - closed) * std::max (0.0, env);
 }
 
 std::vector<CurvePoint> normalisedCurve (std::vector<CurvePoint> c)

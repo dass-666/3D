@@ -84,6 +84,14 @@ bool shaperSpan (const ShaperSettings&, double length, double& start, double& en
 // most `maxPoints` breakpoints (simplified: the same curve, not a dense trace).
 std::vector<CurvePoint> bakeCurve (const ShaperSettings& s, double spanSeconds, double divisionSeconds,
                                    int maxPoints = limits::maxShaperCurvePoints);
+// Same, from whatever drives the curve now (generator, points or cuts).
+std::vector<CurvePoint> bakeActiveCurve (const ShaperSettings& s, double spanSeconds, double divisionSeconds,
+                                         int maxPoints = limits::maxShaperCurvePoints);
+// Openings of the curve that drives `s` now (generator or points), as cut blocks:
+// segments above the midpoint between its lowest and highest gain. `closedLevel`
+// receives that lowest gain. At most limits::maxCutBlocks (`found` = how many there were).
+std::vector<CutBlock> detectBlocks (const ShaperSettings& s, double spanSeconds, double divisionSeconds,
+                                    double& closedLevel, int& found);
 // Makeup gain (linear) applied together with the curve: makeupDb plus, with
 // autoLevel, the RMS the closed parts remove (capped at +6 dB; +12 dB in total).
 float shaperLevelGain (const ShaperSettings&, double voiceSeconds, double divisionSeconds);

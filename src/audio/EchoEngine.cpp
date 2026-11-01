@@ -131,9 +131,10 @@ float shaperGain (const ShaperSettings& sh, double t, double length, double divi
 
     const double span = end - start;
     const double local = t - start;  // seconds into the shaped span
-    if (sh.custom && sh.curve.size() >= 2)
+    const bool cutsMode = sh.custom && sh.manualKind == ShaperSettings::ManualKind::Cuts;
+    if (cutsMode || (sh.custom && sh.curve.size() >= 2))
     {
-        double g = curveGainAt (sh.curve, local / span);
+        double g = cutsMode ? blocksGainAt (sh, local * 1000.0) : curveGainAt (sh.curve, local / span);
         if (! sh.wholeVoice || sh.lengthMs > 0.0)
         {
             const double edge = 0.002;  // 2 ms back to unity at the edges of a partial span
@@ -229,17 +230,30 @@ float shaperGain (const ShaperSettings& sh, double t, double length, double divi
     return (float) g;
 }
 
+static std::vector<CurvePoint> bakeSettings (ShaperSettings s, double spanSeconds, double divisionSeconds, int maxPoints);
+
 std::vector<CurvePoint> bakeCurve (const ShaperSettings& settings, double spanSeconds, double divisionSeconds, int maxPoints)
 {
-    // Sample the generated curve densely over the shaped span (region/length
+    ShaperSettings s = settings;
+    s.custom = false;
+    return bakeSettings (s, spanSeconds, divisionSeconds, maxPoints);
+}
+
+std::vector<CurvePoint> bakeActiveCurve (const ShaperSettings& settings, double spanSeconds, double divisionSeconds, int maxPoints)
+{
+    return bakeSettings (settings, spanSeconds, divisionSeconds, maxPoints);
+}
+
+static std::vector<CurvePoint> bakeSettings (ShaperSettings s, double spanSeconds, double divisionSeconds, int maxPoints)
+{
+    // Sample the curve densely over the shaped span (region/length
     // already apply to the span, so the samples cover exactly 0..1 of it),
     // then keep only the breakpoints that matter (Douglas-Peucker).
-    ShaperSettings s = settings;
     s.enabled = true;
-    s.custom = false;
     s.wholeVoice = true;
     s.lengthMs = 0.0;
-    const int n = 8192;
+    // Dense enough for 2 ms openings over long spans (at most ~0.25 ms per sample).
+    const int n = juce::jlimit (8192, 131072, (int) (spanSeconds * 4000.0));
     std::vector<CurvePoint> dense ((size_t) n + 1);
     for (int i = 0; i <= n; ++i)
     {
@@ -292,6 +306,58 @@ std::vector<CurvePoint> bakeCurve (const ShaperSettings& settings, double spanSe
         out.erase (out.begin() + (long) victim);
     }
     return out;
+}
+
+std::vector<CutBlock> detectBlocks (const ShaperSettings& settings, double spanSeconds, double divisionSeconds,
+                                    double& closedLevel, int& found)
+{
+    ShaperSettings s = settings;
+    s.enabled = true;
+    s.wholeVoice = true;
+    s.lengthMs = 0.0;
+    const double span = std::max (1.0e-3, spanSeconds);
+    const int n = juce::jlimit (2048, 240000, (int) (span * 4000.0));  // 0.25 ms steps
+    std::vector<float> g ((size_t) n);
+    float lo = 1.0f, hi = 0.0f;
+    for (int i = 0; i < n; ++i)
+    {
+        g[(size_t) i] = shaperGain (s, (i + 0.5) / n * span, span, divisionSeconds);
+        lo = std::min (lo, g[(size_t) i]);
+        hi = std::max (hi, g[(size_t) i]);
+    }
+    closedLevel = lo;
+    found = 0;
+    std::vector<CutBlock> out;
+    if (hi - lo < 0.02f)
+    {
+        // Flat: one opening over everything at that level (the sound does not change).
+        found = 1;
+        closedLevel = std::max (0.0f, lo - 0.0f);
+        out.push_back ({ 0.0, span * 1000.0, (double) hi });
+        return out;
+    }
+    const float threshold = lo + 0.5f * (hi - lo);
+    const double msPer = span * 1000.0 / n;
+    for (int i = 0; i < n;)
+    {
+        if (g[(size_t) i] <= threshold) { ++i; continue; }
+        int j = i;
+        float peak = 0.0f;
+        while (j < n && g[(size_t) j] > threshold)
+            peak = std::max (peak, g[(size_t) j++]);
+        ++found;
+        if ((int) out.size() < limits::maxCutBlocks)
+        {
+            // The ramps make the crossing later/earlier than the real opening: widen
+            // by half a ramp on each side, and never below the minimum length.
+            double a = i * msPer - 0.5 * std::min (s.attackMs, 10.0), b = j * msPer + 0.5 * std::min (s.releaseMs, 10.0);
+            a = std::max (0.0, a);
+            b = std::min (span * 1000.0, std::max (b, a + limits::minCutBlockMs));
+            out.push_back ({ a, b, (double) peak });
+        }
+        i = j;
+    }
+    return normalisedBlocks (out);
 }
 
 float shaperLevelGain (const ShaperSettings& sh, double voiceSeconds, double divisionSeconds)

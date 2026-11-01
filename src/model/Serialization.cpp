@@ -127,6 +127,18 @@ var pointToVar (const Point& p)
         }
         set (sh, "curve", var (curve));
     }
+    if (p.shaper.manualKind == ShaperSettings::ManualKind::Cuts)
+        set (sh, "manualKind", "cuts");
+    if (! p.shaper.blocks.empty())
+    {
+        juce::Array<var> blocks;
+        for (auto& b : p.shaper.blocks)
+        {
+            juce::Array<var> sel { b.startMs, b.endMs, b.level };
+            blocks.add (var (sel));
+        }
+        set (sh, "blocks", var (blocks));
+    }
     set (o, "shaper", sh);
 
     auto fx = obj();
@@ -409,6 +421,20 @@ struct Reader
             x.makeupDb = number (sh, "makeupDb", 0.0, -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb, where + ".shaper");
             x.autoLevel = flag (sh, "autoLevel", false);
             x.custom = flag (sh, "custom", false);
+            // Optional (B10): older scenes have no cut blocks and use points.
+            x.manualKind = text (sh, "manualKind", "points") == "cuts" ? ShaperSettings::ManualKind::Cuts : ShaperSettings::ManualKind::Points;
+            if (const auto* blocks = sh.getProperty ("blocks", var()).getArray())
+                for (const auto& b : *blocks)
+                {
+                    const auto* v = b.getArray();
+                    auto num = [] (const var& n) { return n.isDouble() || n.isInt() || n.isInt64(); };
+                    if (v == nullptr || v->size() != 3 || ! num ((*v)[0]) || ! num ((*v)[1]) || ! num ((*v)[2]))
+                    {
+                        warnings.add (where + ".shaper.blocks: bad cut ignored");
+                        continue;
+                    }
+                    x.blocks.push_back ({ (double) (*v)[0], (double) (*v)[1], (double) (*v)[2] });
+                }
             if (const auto* curve = sh.getProperty ("curve", var()).getArray())
             {
                 for (const auto& pt : *curve)
@@ -422,7 +448,7 @@ struct Reader
                     x.curve.push_back ({ (double) (*xy)[0], (double) (*xy)[1] });
                 }
             }
-            else if (x.custom)
+            else if (x.custom && x.manualKind == ShaperSettings::ManualKind::Points)
             {
                 warnings.add (where + ".shaper.curve: missing, using the generated shape");
                 x.custom = false;
