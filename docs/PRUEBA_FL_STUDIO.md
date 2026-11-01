@@ -1,4 +1,4 @@
-# Prueba manual en FL Studio (B2 corregido + B3 + interfaz)
+# Prueba manual en FL Studio (B2 corregido + B3 + interfaz + B4 efectos)
 
 Las pruebas automáticas simulan un host; **no sustituyen esta prueba**. Anota
 OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`.
@@ -44,6 +44,35 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
 2. Arrastra un punto mientras suena: el paneo cambia sin clics.
 3. «Delante/Detrás» solo cambia nivel y brillo (profundidad aproximada). No es 3D.
 4. Sube Mix al 100 % con 16 puntos a la vez: con «Protección» activa no debe saturar.
+
+## 6. Pitch y ganancia por repetición (B4)
+1. Selecciona la repetición 2. Preset «Agudo»: la barra Pitch marca +7 st.
+   Justo después aparece «procesando tono…» (naranja) y un punto ámbar en la
+   línea temporal; en una voz de 1–2 s debe desaparecer en menos de un segundo.
+   Mientras se procesa, esa repetición suena con el tono original (no se simula).
+2. Pulsa «Disparar esta» (panel) o clic derecho en el punto → «Disparar esta»:
+   suena **solo** esa repetición, una quinta más aguda y con la **misma
+   duración** que el original.
+3. Pon la repetición 3 en −5 st y la 4 en +12 st. Dispara (global): cada una
+   suena con su tono y las demás no cambian.
+4. Ganancia −36 dB en la 1: casi inaudible; +12 dB con «Protección» activa: no
+   satura (línea de diagnóstico «limitador» muestra la reducción).
+5. Selecciona varias repeticiones (Shift+clic) y elige un preset: cambia el
+   tono de todas, sin mover su posición ni su momento.
+6. Guarda el proyecto, cierra y reabre FL Studio: tono, ganancia y Stutter de
+   cada repetición deben volver exactamente.
+
+## 7. Stutter / Beat Repeat (B4)
+1. Repetición 3: activa Stutter, «Qué repetir: Inicio», 1/16, 8 repeticiones,
+   50 % de duración. La línea temporal muestra 8 trozos. Dispara: oyes
+   ta-ta-ta-ta-ta-ta-ta-ta a 1/16 del tempo del proyecto, sin clics.
+2. Cambia el BPM del proyecto: la separación entre trozos sigue al tempo.
+3. 1/32 con 32 repeticiones en los 16 puntos a la vez: no debe haber cortes ni
+   saturación (con «Protección»).
+4. «Copiar Stutter» en un punto y «Pegar Stutter» con varios seleccionados:
+   todos reciben la misma configuración.
+5. Lo que **no** existe todavía y la interfaz marca como «próximamente»:
+   aceleración progresiva, «carácter» (Robot/Fantasma) y «velocidad».
 
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la

@@ -300,7 +300,7 @@ TEST_CASE ("Stutter: N slices at the division spacing, slice length limited, non
 {
     const auto sr = GENERATE (44100.0, 48000.0, 96000.0);
     const auto block = GENERATE (64, 512, 2048);
-    const double bpm = 120.0;
+    const auto bpm = GENERATE (90.0, 120.0, 150.0);
     EchoEngine e;
     e.prepare (sr);
     Scene s;
@@ -308,8 +308,8 @@ TEST_CASE ("Stutter: N slices at the division spacing, slice length limited, non
     p.id = "p"; p.number = 1; p.timing.beat = 1.0;
     p.stutter.enabled = true;
     p.stutter.repeats = 8;
-    p.stutter.division = StutterSettings::Division::Sixteenth;  // 0.25 beat = 125 ms at 120 BPM
-    p.stutter.sliceLengthPercent = 50.0;                          // 62.5 ms sound, 62.5 ms gap
+    p.stutter.division = StutterSettings::Division::Sixteenth;  // 0.25 beat (125 ms at 120 BPM)
+    p.stutter.sliceLengthPercent = 50.0;                          // half sound, half gap
     p.stutter.region = StutterSettings::Region::Start;
     s.points.push_back (p);
     auto sample = std::make_shared<const SampleBuffer> (sine (220.0, sr, 1.0));  // longer than any slice
@@ -330,13 +330,20 @@ TEST_CASE ("Stutter: N slices at the division spacing, slice length limited, non
     }
     const auto on = onsets (out);
     REQUIRE (on.size() == 8);
-    const double step = 0.125 * sr;
+    const double beatSamples = 60.0 / bpm * sr;
+    const double step = 0.25 * beatSamples;
     for (size_t k = 0; k < on.size(); ++k)
-        CHECK (std::abs (on[k] - (0.5 * sr + k * step)) <= 2.0);
-    // Each slice is 62.5 ms: silence again before the next one.
-    const int mid = (int) (0.5 * sr + 0.09 * sr);
-    CHECK (rms (out.data() + mid, (int) (0.02 * sr)) < 1e-4f);
+        CHECK (std::abs (on[k] - (beatSamples + k * step)) <= 2.0);
+    // Each slice sounds for half the step: silence again before the next one.
+    const int mid = (int) (beatSamples + 0.72 * step);
+    CHECK (rms (out.data() + mid, (int) (0.1 * step)) < 1e-4f);
     CHECK (e.stats().dropped == 0);
+    // No clicks: every slice starts and ends with a fade, so consecutive
+    // samples never jump more than the tone itself moves (plus fade slope).
+    float maxStep = 0.0f;
+    for (size_t i = 1; i < out.size(); ++i)
+        maxStep = std::max (maxStep, std::abs (out[i] - out[i - 1]));
+    CHECK (maxStep < 0.08f);
 
     // Worst case: 16 points x 32 slices scheduled at once.
     Scene big;
