@@ -318,7 +318,7 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
     CHECK (q.getSceneForUi() == p.getSceneForUi());
 }
 
-TEST_CASE ("Pro layout: quick controls edit the generator, «Generar cortes perfectos», sections, navigation, mode switch")
+TEST_CASE ("Pro layout: quick controls edit the generator, generate perfect cuts, sections, navigation, mode switch")
 {
     juce::ScopedJuceInitialiser_GUI init;
     SpatialEchoProcessor p;
