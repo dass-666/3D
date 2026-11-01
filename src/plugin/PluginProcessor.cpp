@@ -280,12 +280,14 @@ void SpatialEchoProcessor::rebuildPlan()
         pitchRenderer.setBase (renderedSample, rate);
     }
 
-    std::set<int> cents;
+    std::set<int> keys;
     for (auto& p : scene.points)
-        cents.insert (centsFor (p.sound.pitchSemitones));
-    pitchRenderer.request (cents);
+        keys.insert (renderKeyFor (p.sound));
+    pitchRenderer.request (keys);
 
-    auto plan = buildPlan (scene, renderedSample, pitchRenderer.ready(), rate);
+    auto plan = buildPlan (scene, renderedSample, pitchRenderer.ready(), rate, lastPlanForSlots.get());
+    lastPlanForSlots = std::make_shared<PlaybackPlan>();
+    lastPlanForSlots->fx = plan->fx;
 
     // Buffers that were in use last time but not now stay readable for 2 s so
     // voices on them fade out instead of stopping dead.

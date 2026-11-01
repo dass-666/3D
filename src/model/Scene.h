@@ -70,8 +70,9 @@ PlayRegion clamped (PlayRegion);
 struct SoundSettings
 {
     double pitchSemitones = 0.0;  // -24..+24
-    double character = 0.0;       // 0..100, preset character intensity (stored; not processed yet)
-    double speedPercent = 100.0;  // 50..200, duration, independent of pitch (stored; not processed yet)
+    double character = 0.0;       // 0..100, legacy preset value (stored; not processed)
+    double speedPercent = 100.0;  // 50..200, legacy (stored; not processed)
+    double formantSemitones = 0.0;  // -12..+12, formant shift independent of pitch (Signalsmith, pre-rendered)
     bool operator== (const SoundSettings&) const = default;
 };
 
@@ -86,6 +87,9 @@ namespace limits
     inline constexpr double maxShaperMakeupDb = 12.0, maxShaperAutoLevelDb = 6.0;
     inline constexpr int minShaperCurvePoints = 2, maxShaperCurvePoints = 512;
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
+    inline constexpr double minFormant = -12.0, maxFormant = 12.0;
+    inline constexpr double maxDelayMs = 2000.0, maxPredelayMs = 200.0;
+    inline constexpr int maxFxPoints = 16;  // repetitions that can carry their own effect chain at once
     inline constexpr double minCharacter = 0.0, maxCharacter = 100.0;
     inline constexpr double minSpeed = 50.0, maxSpeed = 200.0;
     inline constexpr double minGainDb = -36.0, maxGainDb = 12.0;
@@ -206,18 +210,89 @@ struct ShaperPreset
 };
 const std::vector<ShaperPreset>& shaperPresets();
 
-// Per-repetition effects with real processing. Anything not listed here
-// (delay, reverb, modulation, formants) is not implemented and must not be
-// shown as a working control.
+// Per-repetition effect chain, all with real processing, in this fixed order
+// after the voice itself (pitch/formant, filters, Volume Shaper, fades, pan):
+// character -> modulation -> delay -> reverb. Each has its own enable and mix.
+struct CharacterSettings
+{
+    enum class Type { Saturation, Overdrive, Bitcrusher, Telephone, LoFi, Robot };
+    bool enabled = false;
+    Type type = Type::Saturation;
+    double amountPercent = 50.0;  // 0..100 drive / crush / carrier frequency (Robot)
+    double mixPercent = 100.0;
+    bool operator== (const CharacterSettings&) const = default;
+};
+
+struct ModulationSettings
+{
+    enum class Type { Chorus, Flanger, Tremolo };
+    bool enabled = false;
+    Type type = Type::Chorus;
+    double rateHz = 1.0;          // 0.05..20
+    double depthPercent = 50.0;   // 0..100
+    double mixPercent = 50.0;     // chorus / flanger only
+    bool operator== (const ModulationSettings&) const = default;
+};
+
+struct DelaySettings
+{
+    bool enabled = false;
+    bool sync = false;            // false: timeMs; true: division at the tempo in force
+    double timeMs = 250.0;        // 1..2000
+    StutterSettings::Division division = StutterSettings::Division::Eighth;
+    double feedbackPercent = 35.0;  // 0..95
+    bool pingPong = false;
+    double lowpassHz = 8000.0;    // 500..20000 in the feedback path
+    double mixPercent = 30.0;
+    bool operator== (const DelaySettings&) const = default;
+};
+
+struct ReverbSettings
+{
+    enum class Type { Room, Hall, Plate };
+    bool enabled = false;
+    Type type = Type::Room;
+    double sizePercent = 50.0;
+    double decayPercent = 50.0;
+    double predelayMs = 10.0;     // 0..200
+    double mixPercent = 25.0;
+    double outputDb = 0.0;        // -24..+6
+    bool operator== (const ReverbSettings&) const = default;
+};
+
 struct PointEffects
 {
     double fadeInMs = 0.0, fadeOutMs = 0.0;  // 0..2000, on top of the 2 ms anticlick fades
     bool reverse = false;                    // plays the region backwards
     double lowpassHz = 20000.0;              // 200..20000, 20000 = off
     double highpassHz = 20.0;                // 20..5000, 20 = off
+    CharacterSettings character;
+    ModulationSettings modulation;
+    DelaySettings delay;
+    ReverbSettings reverb;
     bool operator== (const PointEffects&) const = default;
+    bool usesChain() const noexcept { return character.enabled || modulation.enabled || delay.enabled || reverb.enabled; }
 };
 PointEffects clamped (PointEffects);
+juce::String toString (CharacterSettings::Type);
+std::optional<CharacterSettings::Type> characterTypeFromString (const juce::String&);
+juce::String toString (ModulationSettings::Type);
+std::optional<ModulationSettings::Type> modulationTypeFromString (const juce::String&);
+juce::String toString (ReverbSettings::Type);
+std::optional<ReverbSettings::Type> reverbTypeFromString (const juce::String&);
+
+// Creative presets: a complete recipe for a repetition (sound, Volume Shaper
+// and/or effect chain), all made of processing that exists.
+struct PointPreset
+{
+    const char* id;
+    const char* name;
+    const char* description;
+    std::optional<SoundSettings> sound;
+    std::optional<ShaperSettings> shaper;
+    std::optional<PointEffects> effects;
+};
+const std::vector<PointPreset>& pointPresets();
 
 struct Point
 {
@@ -311,6 +386,7 @@ bool setStutter (Scene&, const juce::String& id, StutterSettings);
 bool setShaper (Scene&, const juce::String& id, ShaperSettings);
 bool setRegion (Scene&, const juce::String& id, PlayRegion);
 bool setEffects (Scene&, const juce::String& id, PointEffects);
+void applyPointPreset (Point&, const PointPreset&);
 // Switches the scene's time mode, converting every point's moment with `bpm`
 // so nothing moves at that tempo.
 void setTimeMode (Scene&, TimeMode, double bpm);

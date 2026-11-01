@@ -165,7 +165,16 @@ TEST_CASE ("Plan: pitched points use their rendered copy, others the base; missi
     }
     auto base = std::make_shared<const SampleBuffer> (sine (220.0, 48000.0, 0.1));
     auto up = std::make_shared<const SampleBuffer> (sine (330.0, 48000.0, 0.1));
-    std::map<int, SharedSample> pitched { { 700, up } };
+    SoundSettings seven;
+    seven.pitchSemitones = 7.0;
+    CHECK (renderKeyFor (seven) == 7000000);
+    CHECK (renderKeyFor (SoundSettings {}) == 0);
+    double ps = 0.0, fs = 0.0;
+    seven.formantSemitones = -3.5;
+    decodeRenderKey (renderKeyFor (seven), ps, fs);
+    CHECK (ps == 7.0);
+    CHECK (fs == -3.5);
+    std::map<int, SharedSample> pitched { { renderKeyFor (seven = SoundSettings { 7.0 }), up } };
     auto plan = buildPlan (s, base, pitched, 48000.0);
     REQUIRE (plan->echoes.size() == 3);
     CHECK (plan->find (keyForPoint ("p0"))->sample == base);

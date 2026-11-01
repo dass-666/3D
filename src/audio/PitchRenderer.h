@@ -17,7 +17,7 @@ namespace ses
 {
 
 // Synchronous (test / background use): same length as the input, same channels.
-SampleBuffer renderPitched (const SampleBuffer& input, double sampleRate, double semitones);
+SampleBuffer renderPitched (const SampleBuffer& input, double sampleRate, double semitones, double formantSemitones = 0.0);
 
 class PitchRenderer final : private juce::Thread, private juce::AsyncUpdater
 {
@@ -26,14 +26,14 @@ public:
     ~PitchRenderer() override;
 
     // Message thread. Sets the fragment to pitch (cache cleared when it changes)
-    // and the cents values needed; starts rendering the missing ones.
+    // and the render keys needed (renderKeyFor: pitch + formant); starts rendering the missing ones.
     void setBase (SharedSample base, double sampleRate);
-    void request (const std::set<int>& cents);
+    void request (const std::set<int>& keys);
 
     // Message thread. Ready copies for the current base.
     std::map<int, SharedSample> ready() const;
     int numPending() const;
-    bool isPending (int cents) const;
+    bool isPending (int key) const;
 
     std::function<void()> onRenderFinished;  // message thread
 

@@ -10,6 +10,7 @@
 // by playing a pre-rendered pitched copy of the fragment (see PitchRenderer).
 
 #include "audio/SourceAudio.h"
+#include "audio/PointFx.h"
 #include "model/Scene.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -60,6 +61,14 @@ struct PlannedEcho
     float shaperLevel = 1.0f;  // makeup / auto level applied with the curve (linear)
     PointEffects effects;
     float highpassCoef = 0.0f;  // one-pole, 0 = off
+    int fxSlot = -1;            // effect chain slot (PlaybackPlan::fx), -1 = straight to the output
+};
+
+// A repetition's effect chain assignment: at most limits::maxFxPoints at once.
+struct FxAssignment
+{
+    juce::uint64 key = 0;  // 0 = free
+    PointEffects effects;
 };
 
 // Volume Shaper evaluation (pure; shared by the engine and the UI preview).
@@ -87,6 +96,8 @@ struct PlaybackPlan
     double gridBeats = 1.0;              // rhythm step used to align triggers
     std::vector<PlannedEcho> echoes;
     int pendingPitchRenders = 0;
+    std::array<FxAssignment, limits::maxFxPoints> fx {};
+    int pointsWithoutFx = 0;  // points whose chain did not fit (beyond maxFxPoints): they play dry
 
     const PlannedEcho* find (juce::uint64 key, int index) const noexcept;
     const PlannedEcho* find (juce::uint64 key) const noexcept { return find (key, 0); }
@@ -94,7 +105,11 @@ struct PlaybackPlan
 };
 
 juce::uint64 keyForPoint (const juce::String& pointId);
-int centsFor (double semitones) noexcept;  // cache key for pitched renders
+int centsFor (double semitones) noexcept;
+// Cache key for pre-rendered copies: pitch cents and formant cents in one int
+// (0 = nothing to render). decodeRenderKey gives both back.
+int renderKeyFor (const SoundSettings&) noexcept;
+void decodeRenderKey (int key, double& pitchSemitones, double& formantSemitones) noexcept;
 
 // Message thread. Trims (source samples) and resamples to the host rate.
 SharedSample renderSample (const SourceRef&, const DecodedAudio* source, double hostSampleRate);
@@ -102,8 +117,9 @@ SharedSample renderSample (const SourceRef&, const DecodedAudio* source, double 
 // Message thread. One or more echoes per enabled point; if any enabled point
 // is soloed, only soloed points play. `pitched` maps centsFor(semitones) to a
 // rendered copy; a missing entry plays the base and is counted as pending.
+// `previous` keeps effect slots stable across rebuilds (tails survive edits).
 std::unique_ptr<PlaybackPlan> buildPlan (const Scene&, SharedSample base, const std::map<int, SharedSample>& pitched,
-                                         double hostSampleRate);
+                                         double hostSampleRate, const PlaybackPlan* previous = nullptr);
 
 inline std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, double hostSampleRate)
 {
@@ -158,6 +174,7 @@ public:
     // Host position differences up to this are jitter/rounding (FL Studio and
     // tempo changes inside a block produce them); larger ones are relocations.
     static constexpr double kJumpToleranceSeconds = 0.1;
+    static constexpr int kMaxFxBlock = 8192;  // larger host blocks play the chains dry (documented limit)
 
     void prepare (double sampleRate);
     void reset();  // stops everything immediately
@@ -184,6 +201,7 @@ public:
                 fn (v.key);
     }
     int numPendingEvents() const noexcept;
+    int numActiveFxSlots() const noexcept;
     double lastBpmUsed() const noexcept { return bpmUsed; }
     double currentBeat() const noexcept { return lastBlockStart; }
     double currentSeconds() const noexcept { return sampleClock / sampleRate; }
@@ -204,6 +222,7 @@ private:
         bool reverse = false;
         float release = 1.0f;          // < 1 while fading out
         bool releasing = false;
+        int fxSlot = -1;
     };
 
     struct Pending
@@ -238,6 +257,18 @@ private:
 
     std::array<Voice, kMaxVoices> voices {};
     std::array<Pending, kMaxPending> pending {};
+
+    // Effect chains: one per slot, fed by the voices of that repetition.
+    struct FxSlot
+    {
+        juce::uint64 key = 0;
+        PointEffects effects;   // last settings seen (used while a tail rings after unassignment)
+        PointFxChain chain;
+        juce::AudioBuffer<float> send;  // stereo, kMaxFxBlock
+        bool fedThisBlock = false;
+    };
+    std::array<FxSlot, limits::maxFxPoints> fxSlots;
+    void renderFx (juce::AudioBuffer<float>& out, const PlaybackPlan*, int n) noexcept;
 };
 
 } // namespace ses

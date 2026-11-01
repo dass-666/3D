@@ -118,7 +118,7 @@ public:
 
     // Pitch pre-rendering status (message thread).
     int numPendingPitchRenders() const { return pitchRenderer.numPending(); }
-    bool isPitchPending (const Point& p) const { return pitchRenderer.isPending (centsFor (p.sound.pitchSemitones)); }
+    bool isPitchPending (const Point& p) const { return pitchRenderer.isPending (renderKeyFor (p.sound)); }
 
     UiMode getUiMode() const noexcept { return uiMode.load(); }
     void setUiMode (UiMode m) noexcept { uiMode.store (m); }
@@ -169,6 +169,7 @@ private:
     SharedSample renderedSample;
     std::vector<std::pair<SharedSample, juce::uint32>> retiring;  // replaced buffers, kept 2 s so voices fade out
     std::vector<SharedSample> lastOwned;
+    std::shared_ptr<PlaybackPlan> lastPlanForSlots;  // only its fx table is used (slot stability)
     const DecodedAudio* renderedFrom = nullptr;
     juce::int64 renderedTrimStart = -1, renderedTrimEnd = -1;
     double renderedRate = 0.0;

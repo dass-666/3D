@@ -239,6 +239,7 @@ const std::vector<ShaperPreset>& shaperPresets()
 SoundSettings clamped (SoundSettings s)
 {
     s.pitchSemitones = std::clamp (s.pitchSemitones, limits::minPitch, limits::maxPitch);
+    s.formantSemitones = std::clamp (s.formantSemitones, limits::minFormant, limits::maxFormant);
     s.character = std::clamp (s.character, limits::minCharacter, limits::maxCharacter);
     s.speedPercent = std::clamp (s.speedPercent, limits::minSpeed, limits::maxSpeed);
     return s;
@@ -408,7 +409,159 @@ PointEffects clamped (PointEffects e)
     e.fadeOutMs = std::clamp (e.fadeOutMs, 0.0, 2000.0);
     e.lowpassHz = std::clamp (e.lowpassHz, 200.0, 20000.0);
     e.highpassHz = std::clamp (e.highpassHz, 20.0, 5000.0);
+    e.character.amountPercent = std::clamp (e.character.amountPercent, 0.0, 100.0);
+    e.character.mixPercent = std::clamp (e.character.mixPercent, 0.0, 100.0);
+    e.modulation.rateHz = std::clamp (e.modulation.rateHz, 0.05, 20.0);
+    e.modulation.depthPercent = std::clamp (e.modulation.depthPercent, 0.0, 100.0);
+    e.modulation.mixPercent = std::clamp (e.modulation.mixPercent, 0.0, 100.0);
+    e.delay.timeMs = std::clamp (e.delay.timeMs, 1.0, limits::maxDelayMs);
+    e.delay.feedbackPercent = std::clamp (e.delay.feedbackPercent, 0.0, 95.0);
+    e.delay.lowpassHz = std::clamp (e.delay.lowpassHz, 500.0, 20000.0);
+    e.delay.mixPercent = std::clamp (e.delay.mixPercent, 0.0, 100.0);
+    e.reverb.sizePercent = std::clamp (e.reverb.sizePercent, 0.0, 100.0);
+    e.reverb.decayPercent = std::clamp (e.reverb.decayPercent, 0.0, 100.0);
+    e.reverb.predelayMs = std::clamp (e.reverb.predelayMs, 0.0, limits::maxPredelayMs);
+    e.reverb.mixPercent = std::clamp (e.reverb.mixPercent, 0.0, 100.0);
+    e.reverb.outputDb = std::clamp (e.reverb.outputDb, -24.0, 6.0);
     return e;
+}
+
+juce::String toString (CharacterSettings::Type t)
+{
+    switch (t)
+    {
+        case CharacterSettings::Type::Saturation: return "saturation";
+        case CharacterSettings::Type::Overdrive:  return "overdrive";
+        case CharacterSettings::Type::Bitcrusher: return "bitcrusher";
+        case CharacterSettings::Type::Telephone:  return "telephone";
+        case CharacterSettings::Type::LoFi:       return "lofi";
+        case CharacterSettings::Type::Robot:      return "robot";
+    }
+    return "saturation";
+}
+
+std::optional<CharacterSettings::Type> characterTypeFromString (const juce::String& s)
+{
+    for (auto t : { CharacterSettings::Type::Saturation, CharacterSettings::Type::Overdrive, CharacterSettings::Type::Bitcrusher,
+                    CharacterSettings::Type::Telephone, CharacterSettings::Type::LoFi, CharacterSettings::Type::Robot })
+        if (toString (t) == s)
+            return t;
+    return std::nullopt;
+}
+
+juce::String toString (ModulationSettings::Type t)
+{
+    switch (t)
+    {
+        case ModulationSettings::Type::Chorus:  return "chorus";
+        case ModulationSettings::Type::Flanger: return "flanger";
+        case ModulationSettings::Type::Tremolo: return "tremolo";
+    }
+    return "chorus";
+}
+
+std::optional<ModulationSettings::Type> modulationTypeFromString (const juce::String& s)
+{
+    for (auto t : { ModulationSettings::Type::Chorus, ModulationSettings::Type::Flanger, ModulationSettings::Type::Tremolo })
+        if (toString (t) == s)
+            return t;
+    return std::nullopt;
+}
+
+juce::String toString (ReverbSettings::Type t)
+{
+    switch (t)
+    {
+        case ReverbSettings::Type::Room:  return "room";
+        case ReverbSettings::Type::Hall:  return "hall";
+        case ReverbSettings::Type::Plate: return "plate";
+    }
+    return "room";
+}
+
+std::optional<ReverbSettings::Type> reverbTypeFromString (const juce::String& s)
+{
+    for (auto t : { ReverbSettings::Type::Room, ReverbSettings::Type::Hall, ReverbSettings::Type::Plate })
+        if (toString (t) == s)
+            return t;
+    return std::nullopt;
+}
+
+const std::vector<PointPreset>& pointPresets()
+{
+    static const std::vector<PointPreset> presets = []
+    {
+        std::vector<PointPreset> v;
+        auto shaperOf = [] (const char* id)
+        {
+            for (auto& pr : shaperPresets())
+                if (juce::String (pr.id) == id)
+                    return pr.settings;
+            return ShaperSettings {};
+        };
+        auto sound = [] (double pitch, double formant) { SoundSettings s; s.pitchSemitones = pitch; s.formantSemitones = formant; return s; };
+        PointEffects fx;
+
+        v.push_back ({ "vocal-chop", "Vocal Chop", "Cortes r\xc3\xadtmicos con huecos (patr\xc3\xb3n xx.x).", std::nullopt, shaperOf ("vocal-chop"), std::nullopt });
+        v.push_back ({ "fast-gate", "Fast Gate", "24 cortes r\xc3\xa1pidos con nivel autom\xc3\xa1tico.", std::nullopt, shaperOf ("fast-gate"), std::nullopt });
+        v.push_back ({ "trance-gate", "Trance Gate", "Cortes a 1/16 del BPM.", std::nullopt, shaperOf ("trance-gate"), std::nullopt });
+        v.push_back ({ "machine-gun", "Machine Gun", "64 cortes muy cortos.", std::nullopt, shaperOf ("machine-gun"), std::nullopt });
+
+        fx = {};
+        fx.character = { true, CharacterSettings::Type::Bitcrusher, 35.0, 60.0 };
+        v.push_back ({ "glitch", "Glitch Vocal", "Cortes irregulares y bitcrusher suave.", std::nullopt, shaperOf ("glitch"), fx });
+
+        fx = {};
+        fx.character = { true, CharacterSettings::Type::Robot, 55.0, 85.0 };
+        v.push_back ({ "robot", "Robot", "Modulaci\xc3\xb3n en anillo (voz met\xc3\xa1lica), formantes planos.", sound (0.0, -1.0), std::nullopt, fx });
+
+        fx = {};
+        fx.modulation = { true, ModulationSettings::Type::Chorus, 0.6, 60.0, 50.0 };
+        fx.reverb = { true, ReverbSettings::Type::Hall, 85.0, 80.0, 40.0, 55.0, 0.0 };
+        v.push_back ({ "ghost", "Fantasma", "Tono y formantes arriba, chorus y hall largo.", sound (5.0, 3.0), std::nullopt, fx });
+
+        fx = {};
+        fx.character = { true, CharacterSettings::Type::Saturation, 45.0, 100.0 };
+        fx.lowpassHz = 6000.0;
+        v.push_back ({ "monster", "Monster", "Muy grave, formantes abajo y saturaci\xc3\xb3n.", sound (-9.0, -6.0), std::nullopt, fx });
+
+        fx = {};
+        fx.character = { true, CharacterSettings::Type::Telephone, 50.0, 100.0 };
+        v.push_back ({ "telephone", "Radio / Tel\xc3\xa9" "fono", "Banda 300\xe2\x80\x93" "3400 Hz con algo de distorsi\xc3\xb3n.", std::nullopt, std::nullopt, fx });
+
+        fx = {};
+        fx.modulation = { true, ModulationSettings::Type::Chorus, 0.35, 45.0, 60.0 };
+        fx.delay = { true, false, 18.0, StutterSettings::Division::Sixteenth, 0.0, true, 12000.0, 40.0 };
+        v.push_back ({ "wide", "Wide Vocal", "Chorus lento y doble corto en ping-pong.", std::nullopt, std::nullopt, fx });
+
+        fx = {};
+        fx.delay = { true, true, 375.0, StutterSettings::Division::Eighth, 55.0, true, 5000.0, 45.0 };
+        fx.reverb = { true, ReverbSettings::Type::Room, 40.0, 35.0, 5.0, 20.0, 0.0 };
+        v.push_back ({ "echo-throw", "Echo Throw", "Delay 1/8 ping-pong con cola y sala peque\xc3\xb1" "a.", std::nullopt, std::nullopt, fx });
+
+        v.push_back ({ "fade-stutter", "Fade Stutter", "12 cortes en diente de sierra.", std::nullopt, shaperOf ("fade-stutter"), std::nullopt });
+
+        fx = {};
+        fx.reverse = true;
+        fx.fadeInMs = 120.0;
+        fx.reverb = { true, ReverbSettings::Type::Plate, 60.0, 65.0, 0.0, 35.0, 0.0 };
+        v.push_back ({ "reverse-tail", "Reverse Tail", "Al rev\xc3\xa9s con entrada suave y plate.", std::nullopt, std::nullopt, fx });
+        return v;
+    }();
+    return presets;
+}
+
+void applyPointPreset (Point& p, const PointPreset& preset)
+{
+    if (preset.sound)
+    {
+        p.sound = clamped (*preset.sound);
+        p.voice = { juce::String ("creative.") + preset.id, juce::String::fromUTF8 (preset.name), false };
+    }
+    if (preset.shaper)
+        p.shaper = clamped (*preset.shaper);
+    if (preset.effects)
+        p.effects = clamped (*preset.effects);
 }
 
 bool setEffects (Scene& scene, const juce::String& id, PointEffects e)
@@ -537,6 +690,15 @@ int applyVoicePreset (Scene& scene, const std::vector<juce::String>& pointIds, c
         {
             p->sound = clamped (preset.sound);
             p->voice = { preset.id, preset.name, false };
+            // Monster / Robot / Fantasma are also an effect chain (real
+            // processing); the other voice presets leave the effects alone.
+            const char* creative = preset.id == "builtin.monster" ? "monster"
+                                 : preset.id == "builtin.robot" ? "robot"
+                                 : preset.id == "builtin.fantasma" ? "ghost" : nullptr;
+            if (creative != nullptr)
+                for (auto& pp : pointPresets())
+                    if (juce::String (pp.id) == creative && pp.effects)
+                        p->effects = clamped (*pp.effects);
             ++changed;
         }
     }

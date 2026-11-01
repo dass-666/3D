@@ -44,6 +44,7 @@ var soundToVar (const SoundSettings& s)
     set (o, "pitchSemitones", s.pitchSemitones);
     set (o, "character", s.character);
     set (o, "speedPercent", s.speedPercent);
+    set (o, "formantSemitones", s.formantSemitones);
     return o;
 }
 
@@ -130,6 +131,50 @@ var pointToVar (const Point& p)
     set (fx, "reverse", p.effects.reverse);
     set (fx, "lowpassHz", p.effects.lowpassHz);
     set (fx, "highpassHz", p.effects.highpassHz);
+    {
+        const auto& c = p.effects.character;
+        auto x = obj();
+        set (x, "enabled", c.enabled);
+        set (x, "type", toString (c.type));
+        set (x, "amountPercent", c.amountPercent);
+        set (x, "mixPercent", c.mixPercent);
+        set (fx, "character", x);
+    }
+    {
+        const auto& m = p.effects.modulation;
+        auto x = obj();
+        set (x, "enabled", m.enabled);
+        set (x, "type", toString (m.type));
+        set (x, "rateHz", m.rateHz);
+        set (x, "depthPercent", m.depthPercent);
+        set (x, "mixPercent", m.mixPercent);
+        set (fx, "modulation", x);
+    }
+    {
+        const auto& d = p.effects.delay;
+        auto x = obj();
+        set (x, "enabled", d.enabled);
+        set (x, "sync", d.sync);
+        set (x, "timeMs", d.timeMs);
+        set (x, "division", toString (d.division));
+        set (x, "feedbackPercent", d.feedbackPercent);
+        set (x, "pingPong", d.pingPong);
+        set (x, "lowpassHz", d.lowpassHz);
+        set (x, "mixPercent", d.mixPercent);
+        set (fx, "delay", x);
+    }
+    {
+        const auto& r = p.effects.reverb;
+        auto x = obj();
+        set (x, "enabled", r.enabled);
+        set (x, "type", toString (r.type));
+        set (x, "sizePercent", r.sizePercent);
+        set (x, "decayPercent", r.decayPercent);
+        set (x, "predelayMs", r.predelayMs);
+        set (x, "mixPercent", r.mixPercent);
+        set (x, "outputDb", r.outputDb);
+        set (fx, "reverb", x);
+    }
     set (o, "effects", fx);
     return o;
 }
@@ -237,6 +282,7 @@ struct Reader
         s.pitchSemitones = number (o, "pitchSemitones", 0.0, limits::minPitch, limits::maxPitch, where);
         s.character = number (o, "character", 0.0, limits::minCharacter, limits::maxCharacter, where);
         s.speedPercent = number (o, "speedPercent", 100.0, limits::minSpeed, limits::maxSpeed, where);
+        s.formantSemitones = number (o, "formantSemitones", 0.0, limits::minFormant, limits::maxFormant, where);
         return s;
     }
 
@@ -379,6 +425,54 @@ struct Reader
             e.reverse = flag (fx, "reverse", false);
             e.lowpassHz = number (fx, "lowpassHz", 20000.0, 200.0, 20000.0, where + ".effects");
             e.highpassHz = number (fx, "highpassHz", 20.0, 20.0, 5000.0, where + ".effects");
+            if (const auto c = fx.getProperty ("character", var()); c.isObject())
+            {
+                e.character.enabled = flag (c, "enabled", false);
+                if (auto t = characterTypeFromString (text (c, "type", "saturation")))
+                    e.character.type = *t;
+                else
+                    warnings.add (where + ".effects.character.type: unknown, using saturation");
+                e.character.amountPercent = number (c, "amountPercent", 50.0, 0.0, 100.0, where + ".effects.character");
+                e.character.mixPercent = number (c, "mixPercent", 100.0, 0.0, 100.0, where + ".effects.character");
+            }
+            if (const auto m = fx.getProperty ("modulation", var()); m.isObject())
+            {
+                e.modulation.enabled = flag (m, "enabled", false);
+                if (auto t = modulationTypeFromString (text (m, "type", "chorus")))
+                    e.modulation.type = *t;
+                else
+                    warnings.add (where + ".effects.modulation.type: unknown, using chorus");
+                e.modulation.rateHz = number (m, "rateHz", 1.0, 0.05, 20.0, where + ".effects.modulation");
+                e.modulation.depthPercent = number (m, "depthPercent", 50.0, 0.0, 100.0, where + ".effects.modulation");
+                e.modulation.mixPercent = number (m, "mixPercent", 50.0, 0.0, 100.0, where + ".effects.modulation");
+            }
+            if (const auto d = fx.getProperty ("delay", var()); d.isObject())
+            {
+                e.delay.enabled = flag (d, "enabled", false);
+                e.delay.sync = flag (d, "sync", false);
+                e.delay.timeMs = number (d, "timeMs", 250.0, 1.0, limits::maxDelayMs, where + ".effects.delay");
+                if (auto t = stutterDivisionFromString (text (d, "division", "1/8")))
+                    e.delay.division = *t;
+                else
+                    warnings.add (where + ".effects.delay.division: unknown, using 1/8");
+                e.delay.feedbackPercent = number (d, "feedbackPercent", 35.0, 0.0, 95.0, where + ".effects.delay");
+                e.delay.pingPong = flag (d, "pingPong", false);
+                e.delay.lowpassHz = number (d, "lowpassHz", 8000.0, 500.0, 20000.0, where + ".effects.delay");
+                e.delay.mixPercent = number (d, "mixPercent", 30.0, 0.0, 100.0, where + ".effects.delay");
+            }
+            if (const auto r = fx.getProperty ("reverb", var()); r.isObject())
+            {
+                e.reverb.enabled = flag (r, "enabled", false);
+                if (auto t = reverbTypeFromString (text (r, "type", "room")))
+                    e.reverb.type = *t;
+                else
+                    warnings.add (where + ".effects.reverb.type: unknown, using room");
+                e.reverb.sizePercent = number (r, "sizePercent", 50.0, 0.0, 100.0, where + ".effects.reverb");
+                e.reverb.decayPercent = number (r, "decayPercent", 50.0, 0.0, 100.0, where + ".effects.reverb");
+                e.reverb.predelayMs = number (r, "predelayMs", 10.0, 0.0, limits::maxPredelayMs, where + ".effects.reverb");
+                e.reverb.mixPercent = number (r, "mixPercent", 25.0, 0.0, 100.0, where + ".effects.reverb");
+                e.reverb.outputDb = number (r, "outputDb", 0.0, -24.0, 6.0, where + ".effects.reverb");
+            }
             p.effects = clamped (e);
         }
         return p;

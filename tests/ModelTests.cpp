@@ -169,7 +169,7 @@ TEST_CASE ("New points start one rhythm step after the latest point")
 TEST_CASE ("Voice preset library is independent of scenes")
 {
     VoicePresetLibrary lib;
-    CHECK (lib.all().size() == 6);
+    CHECK (lib.all().size() == 8);
     CHECK (lib.userPresets().empty());
 
     // Built-ins cannot be overwritten or removed.
@@ -191,13 +191,36 @@ TEST_CASE ("Voice preset library is independent of scenes")
     CHECK (scene.points[0].voice.presetName == "Mi voz");
 }
 
-TEST_CASE ("Built-in presets that need unimplemented processing are flagged")
+TEST_CASE ("Built-in voice presets are all processed for real; Monster/Robot/Fantasma differ by their effect chain")
 {
     VoicePresetLibrary lib;
-    CHECK_FALSE (lib.find (presetIds::original)->needsFutureProcessing);
-    CHECK_FALSE (lib.find (presetIds::agudo)->needsFutureProcessing);
-    CHECK_FALSE (lib.find (presetIds::grave)->needsFutureProcessing);
-    CHECK (lib.find (presetIds::monster)->needsFutureProcessing);
-    CHECK (lib.find (presetIds::robot)->needsFutureProcessing);
-    CHECK (lib.find (presetIds::fantasma)->needsFutureProcessing);
+    for (auto& p : lib.all())
+        CHECK_FALSE (p.needsFutureProcessing);
+    auto scene = makeDemoScene();
+    const auto id = scene.points[0].id;
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::robot));
+    CHECK (findPoint (scene, id)->effects.character.enabled);
+    CHECK (findPoint (scene, id)->effects.character.type == CharacterSettings::Type::Robot);
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::fantasma));
+    CHECK (findPoint (scene, id)->effects.reverb.enabled);
+    CHECK (findPoint (scene, id)->effects.modulation.enabled);
+    CHECK (findPoint (scene, id)->sound.formantSemitones > 0.0);
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::monster));
+    CHECK (findPoint (scene, id)->effects.character.type == CharacterSettings::Type::Saturation);
+    CHECK (findPoint (scene, id)->sound.formantSemitones < 0.0);
+    // Plain voice presets leave the chain alone.
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::agudo));
+    CHECK (findPoint (scene, id)->effects.character.type == CharacterSettings::Type::Saturation);
+    CHECK (findPoint (scene, id)->sound.formantSemitones == 0.0);
+    // Every creative preset only uses settings that exist and survive clamping.
+    for (auto& cp : pointPresets())
+    {
+        Point q;
+        applyPointPreset (q, cp);
+        CHECK (q.effects == clamped (q.effects));
+        CHECK (q.shaper == clamped (q.shaper));
+        CHECK (q.sound == clamped (q.sound));
+        CHECK ((cp.sound || cp.shaper || cp.effects));
+    }
+    CHECK (pointPresets().size() == 13);
 }

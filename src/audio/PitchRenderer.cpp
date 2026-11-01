@@ -25,7 +25,7 @@
 namespace ses
 {
 
-SampleBuffer renderPitched (const SampleBuffer& input, double sampleRate, double semitones)
+SampleBuffer renderPitched (const SampleBuffer& input, double sampleRate, double semitones, double formantSemitones)
 {
     const int channels = input.getNumChannels();
     const int n = input.getNumSamples();
@@ -37,6 +37,8 @@ SampleBuffer renderPitched (const SampleBuffer& input, double sampleRate, double
     signalsmith::stretch::SignalsmithStretch<float> stretch;
     stretch.presetDefault (channels, (float) sampleRate);
     stretch.setTransposeSemitones ((float) semitones);
+    if (std::abs (formantSemitones) > 1.0e-6)
+        stretch.setFormantSemitones ((float) formantSemitones, false);  // formants move independently of the pitch
 
     const int inLat = stretch.inputLatency();
     const int outLat = stretch.outputLatency();
@@ -157,7 +159,9 @@ void PitchRenderer::run()
             continue;
         }
 
-        auto rendered = std::make_shared<const SampleBuffer> (renderPitched (*src, sr, cents / 100.0));
+        double semis = 0.0, formant = 0.0;
+        decodeRenderKey (cents, semis, formant);
+        auto rendered = std::make_shared<const SampleBuffer> (renderPitched (*src, sr, semis, formant));
         bool stillValid = false;
         {
             const juce::ScopedLock sl (lock);

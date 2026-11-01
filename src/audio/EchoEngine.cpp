@@ -70,6 +70,19 @@ int centsFor (double semitones) noexcept
     return (int) std::lround (std::clamp (semitones, limits::minPitch, limits::maxPitch) * 100.0);
 }
 
+int renderKeyFor (const SoundSettings& s) noexcept
+{
+    const int formantCents = (int) std::lround (std::clamp (s.formantSemitones, limits::minFormant, limits::maxFormant) * 100.0);
+    return centsFor (s.pitchSemitones) * 10000 + formantCents;  // |formant| <= 1200 < 5000: unambiguous
+}
+
+void decodeRenderKey (int key, double& pitchSemitones, double& formantSemitones) noexcept
+{
+    const int pitchCents = (int) std::lround (key / 10000.0);
+    pitchSemitones = pitchCents / 100.0;
+    formantSemitones = (key - pitchCents * 10000) / 100.0;
+}
+
 namespace
 {
 // Count mode: maps a uniform cut position u (0..1) to time x (0..1) and back.
@@ -325,9 +338,41 @@ SharedSample renderSample (const SourceRef& ref, const DecodedAudio* source, dou
 }
 
 std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, const std::map<int, SharedSample>& pitched,
-                                         double hostSampleRate)
+                                         double hostSampleRate, const PlaybackPlan* previous)
 {
     auto plan = std::make_unique<PlaybackPlan>();
+    // Effect slots: keep the slot a point had in the previous plan, then fill the free ones.
+    auto slotFor = [&] (juce::uint64 key, const PointEffects& fx) -> int
+    {
+        if (! fx.usesChain())
+            return -1;
+        for (int i = 0; i < limits::maxFxPoints; ++i)
+            if (plan->fx[(size_t) i].key == key)
+                return i;
+        if (previous != nullptr)
+            for (int i = 0; i < limits::maxFxPoints; ++i)
+                if (previous->fx[(size_t) i].key == key && plan->fx[(size_t) i].key == 0)
+                {
+                    plan->fx[(size_t) i] = { key, fx };
+                    return i;
+                }
+        for (int i = 0; i < limits::maxFxPoints; ++i)
+            if (plan->fx[(size_t) i].key == 0 && (previous == nullptr || previous->fx[(size_t) i].key == 0
+                                                  || std::none_of (scene.points.begin(), scene.points.end(), [&] (const Point& q)
+                                                                   { return q.enabled && keyForPoint (q.id) == previous->fx[(size_t) i].key && clamped (q.effects).usesChain(); })))
+            {
+                plan->fx[(size_t) i] = { key, fx };
+                return i;
+            }
+        for (int i = 0; i < limits::maxFxPoints; ++i)  // all slots belong to live points: take any free one
+            if (plan->fx[(size_t) i].key == 0)
+            {
+                plan->fx[(size_t) i] = { key, fx };
+                return i;
+            }
+        ++plan->pointsWithoutFx;
+        return -1;
+    };
     plan->sampleRate = hostSampleRate;
     plan->sample = base;
     plan->gridBeats = beatsPerStep (scene.rhythm);
@@ -342,10 +387,10 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
 
         SharedSample sample = base;
         bool pitchPending = false;
-        const int cents = centsFor (p.sound.pitchSemitones);
-        if (cents != 0)
+        const int renderKey = renderKeyFor (p.sound);
+        if (renderKey != 0)
         {
-            if (auto it = pitched.find (cents); it != pitched.end() && it->second != nullptr)
+            if (auto it = pitched.find (renderKey); it != pitched.end() && it->second != nullptr)
                 sample = it->second;
             else
             {
@@ -364,6 +409,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
         const auto shaper = clamped (p.shaper);
         const auto effects = clamped (p.effects);
         const float highpassCoef = effects.highpassHz > 20.0 ? onePoleCoef (effects.highpassHz, hostSampleRate) : 0.0f;
+        const int fxSlot = slotFor (key, effects);
 
         // The part of the fragment this repetition plays.
         const auto region = clamped (p.region);
@@ -392,6 +438,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.shaperLevel = shaperLevel;
             e.effects = effects;
             e.highpassCoef = highpassCoef;
+            e.fxSlot = fxSlot;
             plan->echoes.push_back (std::move (e));
             continue;
         }
@@ -426,6 +473,7 @@ std::unique_ptr<PlaybackPlan> buildPlan (const Scene& scene, SharedSample base, 
             e.shaperLevel = shaperLevel;
             e.effects = effects;
             e.highpassCoef = highpassCoef;
+            e.fxSlot = fxSlot;
             e.sample = sample;
             e.pitchPending = pitchPending;
             e.regionStart = regionStart;
@@ -455,6 +503,13 @@ void EchoEngine::prepare (double newSampleRate)
     sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
     fadeSamples = juce::jmax (1, (int) std::round (kFadeSeconds * sampleRate));
     releaseStep = 1.0f / (float) juce::jmax (1.0, kReleaseSeconds * sampleRate);
+    for (auto& f : fxSlots)
+    {
+        f.chain.prepare (sampleRate, kMaxFxBlock);
+        f.send.setSize (2, kMaxFxBlock);
+        f.send.clear();
+        f.key = 0;
+    }
     reset();
 }
 
@@ -462,6 +517,12 @@ void EchoEngine::reset()
 {
     for (auto& v : voices)
         v.active = false;
+    for (auto& f : fxSlots)
+    {
+        f.chain.reset();
+        f.key = 0;
+        f.fedThisBlock = false;
+    }
     cancelPending();
     expectedHostBeat.reset();
     onHostTimeline = false;
@@ -473,6 +534,45 @@ void EchoEngine::cancelPending() noexcept
 {
     for (auto& p : pending)
         p.active = false;
+}
+
+void EchoEngine::renderFx (juce::AudioBuffer<float>& out, const PlaybackPlan* plan, int n) noexcept
+{
+    if (n > kMaxFxBlock || n <= 0)
+        return;
+    const int outChannels = out.getNumChannels();
+    for (auto& f : fxSlots)
+    {
+        if (! f.fedThisBlock && ! f.chain.isTailActive())
+            continue;
+        float* l = f.send.getWritePointer (0);
+        float* r = f.send.getWritePointer (1);
+        if (f.fedThisBlock)
+        {
+            float peak = 0.0f;
+            for (int i = 0; i < n; ++i)
+                peak = std::max (peak, std::max (std::abs (l[i]), std::abs (r[i])));
+            f.chain.noteInput (peak, f.effects);
+        }
+        f.chain.process (f.effects, l, r, n, bpmUsed);
+        if (outChannels == 1)
+            for (int i = 0; i < n; ++i)
+                out.addSample (0, i, 0.5f * (l[i] + r[i]));
+        else
+        {
+            out.addFrom (0, 0, l, n);
+            out.addFrom (1, 0, r, n);
+        }
+    }
+    juce::ignoreUnused (plan);
+}
+
+int EchoEngine::numActiveFxSlots() const noexcept
+{
+    int k = 0;
+    for (auto& f : fxSlots)
+        k += (f.fedThisBlock || f.chain.isTailActive()) ? 1 : 0;
+    return k;
 }
 
 int EchoEngine::numActiveVoices() const noexcept
@@ -542,14 +642,23 @@ bool EchoEngine::startVoice (const PlannedEcho& echo, int offset, juce::AudioBuf
     v.coef = echo.placement.lowpassCoef;
     v.hpCoef = echo.highpassCoef;
     v.reverse = echo.effects.reverse;
+    v.fxSlot = echo.fxSlot;
     *slot = v;
     renderVoice (*slot, buffer, offset, buffer.getNumSamples(), plan, beatsPerSample);
     return true;
 }
 
-void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& buffer, int start, int end,
+void EchoEngine::renderVoice (Voice& v, juce::AudioBuffer<float>& output, int start, int end,
                               const PlaybackPlan& plan, double beatsPerSample) noexcept
 {
+    // Repetitions with an effect chain render into their slot's send buffer
+    // (stereo), mixed to the output after the chain. Blocks larger than the
+    // send capacity play dry: the chain is skipped, never half-applied.
+    const bool toFx = v.fxSlot >= 0 && v.fxSlot < limits::maxFxPoints && output.getNumSamples() <= kMaxFxBlock
+                      && plan.fx[(size_t) v.fxSlot].key == v.key;
+    auto& buffer = toFx ? fxSlots[(size_t) v.fxSlot].send : output;
+    if (toFx)
+        fxSlots[(size_t) v.fxSlot].fedThisBlock = true;
     if (start >= end)
         return;
 
@@ -668,6 +777,30 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
     const int n = buffer.getNumSamples();
     wetA = wetStart;
     wetStep = n > 0 ? (wetEnd - wetStart) / (float) n : 0.0f;
+
+    // Effect slots follow the plan: a slot whose repetition changed is reset
+    // (its old tail stops); one that lost its repetition keeps ringing out.
+    for (size_t i = 0; i < fxSlots.size(); ++i)
+    {
+        auto& f = fxSlots[i];
+        f.fedThisBlock = false;
+        if (plan != nullptr && plan->fx[i].key != 0)
+        {
+            if (f.key != plan->fx[i].key)
+            {
+                f.chain.reset();
+                f.key = plan->fx[i].key;
+            }
+            f.effects = plan->fx[i].effects;
+        }
+        else if (plan == nullptr)
+        {
+            f.chain.reset();
+            f.key = 0;
+        }
+        if (n <= kMaxFxBlock && (f.key != 0 || f.chain.isTailActive()))
+            f.send.clear (0, n);
+    }
 
     bpmUsed = std::clamp (t.bpm.value_or (kFallbackBpm), 20.0, 999.0);
     const double beatsPerSample = bpmUsed / 60.0 / sampleRate;
@@ -826,6 +959,8 @@ void EchoEngine::process (juce::AudioBuffer<float>& buffer, const PlaybackPlan* 
     {
         cancelPending();
     }
+
+    renderFx (buffer, plan, n);
 
     sampleClock += n;
     const double blockEnd = blockStart + n * beatsPerSample;
