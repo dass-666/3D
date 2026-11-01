@@ -562,6 +562,7 @@ void applyPointPreset (Point& p, const PointPreset& preset)
         p.shaper = clamped (*preset.shaper);
     if (preset.effects)
         p.effects = clamped (*preset.effects);
+    p.creativePreset = preset.id;
 }
 
 bool setEffects (Scene& scene, const juce::String& id, PointEffects e)

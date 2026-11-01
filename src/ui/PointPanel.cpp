@@ -152,6 +152,20 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     stutterTitle.setFont (theme::font (11.5f, true));
     stutterTitle.setColour (juce::Label::textColourId, theme::textDim);
     content.addAndMakeVisible (stutterTitle);
+    soundTitle.setText ("PITCH Y FORMANTES", juce::dontSendNotification);
+    timeTitle.setText ("TIEMPO DEL PUNTO", juce::dontSendNotification);
+    spaceTitle.setText ("NIVEL Y ESPACIO", juce::dontSendNotification);
+    for (auto* h : { &soundTitle, &timeTitle, &spaceTitle })
+    {
+        h->setFont (theme::font (11.5f, true));
+        h->setColour (juce::Label::textColourId, theme::textDim);
+        content.addAndMakeVisible (*h);
+    }
+    for (auto* h : { &soundTitle, &timeTitle, &spaceTitle, &stutterTitle, &effectsTitle, &charTitle, &modTitle, &delayTitle,
+                     &reverbTitle, &shaperTitle })
+        h->onToggle = [this] { resized(); };
+    for (auto* h : { &stutterTitle, &effectsTitle, &charTitle, &modTitle, &delayTitle, &reverbTitle })
+        h->setOpen (false);
     stutterToggle.setTooltip (u8 ("Corta la repetici\xc3\xb3n en trozos cortos repetidos (A-A-A-A)"));
     stutterToggle.onClick = [this] { editPrimary ([on = stutterToggle.getToggleState()] (Scene&, Point& p) { p.stutter.enabled = on; }); };
     content.addAndMakeVisible (stutterToggle);
@@ -242,7 +256,7 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     effectsNote.setColour (juce::Label::textColourId, theme::textFaint);
     content.addAndMakeVisible (effectsNote);
 
-    auto fxTitle = [this] (juce::Label& l, const char* text, juce::ToggleButton& t)
+    auto fxTitle = [this] (SectionHeader& l, const char* text, juce::ToggleButton& t)
     {
         l.setText (u8 (text), juce::dontSendNotification);
         l.setFont (theme::font (11.5f, true));
@@ -771,145 +785,221 @@ void PointPanel::paint (juce::Graphics& g)
     }
 }
 
+SectionHeader* PointPanel::headerFor (const juce::String& id)
+{
+    if (id == "shaper") return &shaperTitle;
+    if (id == "stutter") return &stutterTitle;
+    if (id == "pitch") return &soundTitle;
+    if (id == "filters") return &effectsTitle;
+    if (id == "delay") return &delayTitle;
+    if (id == "reverb") return &reverbTitle;
+    if (id == "modulation") return &modTitle;
+    if (id == "character") return &charTitle;
+    if (id == "space") return &spaceTitle;
+    if (id == "time") return &timeTitle;
+    return nullptr;
+}
+
+void PointPanel::showSection (const juce::String& id)
+{
+    auto* h = headerFor (id);
+    if (h == nullptr)
+        return;
+    h->setOpen (true);
+    resized();
+    if (const auto it = sectionY.find (id); it != sectionY.end())
+        viewport.setViewPosition (0, juce::jmax (0, it->second - 4));
+}
+
 int PointPanel::layoutContent (int width)
 {
     auto r = juce::Rectangle<int> (0, 0, width, 10000);
+    bool open = true;  // of the section being laid out
     auto row = [&] (int h) { auto x = r.removeFromTop (h); r.removeFromTop (3); return x; };
+    auto place = [&] (juce::Component& c, int h, bool visible = true)
+    {
+        c.setVisible (visible && open);
+        if (visible && open)
+            c.setBounds (row (h));
+    };
     auto labelled = [&] (juce::Label& l, juce::Component& c, bool visible = true)
     {
-        l.setVisible (visible);
-        c.setVisible (visible);
-        if (! visible)
+        l.setVisible (visible && open);
+        c.setVisible (visible && open);
+        if (! (visible && open))
             return;
         auto x = row (27);
         l.setBounds (x.removeFromLeft (104));
         c.setBounds (x);
+    };
+    auto section = [&] (const char* id, SectionHeader& h, juce::ToggleButton* toggle = nullptr)
+    {
+        r.removeFromTop (6);
+        sectionY[id] = r.getY();
+        auto x = row (24);
+        if (toggle != nullptr)
+        {
+            toggle->setVisible (true);
+            toggle->setBounds (x.removeFromRight (96));
+        }
+        h.setBounds (x);
+        open = h.isOpen();
     };
 
     auto head = row (28);
     triggerButton.setBounds (head.removeFromRight (108));
     title.setBounds (head.withTrimmedLeft (18));
     r.removeFromTop (2);
-
     labelled (presetL, presetBox);
     presetNote.setBounds (row (28).withTrimmedLeft (104));
     labelled (creativeL, creativeBox);
     {
-        auto x = row (27);
-        pitchL.setBounds (x.removeFromLeft (104));
-        pitchStatus.setBounds (x.removeFromRight (0));
-        pitch.setBounds (x);
-        pitchStatus.setBounds (pitch.getBounds().withTrimmedRight (70).removeFromRight (120).translated (0, -11).withHeight (12));
+        auto actions = row (30);
+        const int w = actions.getWidth() / 4;
+        enabledToggle.setBounds (actions.removeFromLeft (w));
+        soloToggle.setBounds (actions.removeFromLeft (w - 6));
+        duplicateButton.setBounds (actions.removeFromLeft (w).reduced (2, 0));
+        deleteButton.setBounds (actions.reduced (2, 0));
     }
-    labelled (formantL, formant);
-    labelled (gainL, gain);
-    labelled (posXL, posX);
-    labelled (posYL, posY);
-    labelled (beatL, beat);
-    labelled (regionStartL, regionStart, pro);
-    labelled (regionEndL, regionEnd, pro);
 
-    auto actions = row (30);
-    const int w = actions.getWidth() / 4;
-    enabledToggle.setBounds (actions.removeFromLeft (w));
-    soloToggle.setBounds (actions.removeFromLeft (w - 6));
-    duplicateButton.setBounds (actions.removeFromLeft (w).reduced (2, 0));
-    deleteButton.setBounds (actions.reduced (2, 0));
-
-    r.removeFromTop (8);
-    auto sh = row (24);
-    stutterToggle.setBounds (sh.removeFromRight (96));
-    stutterTitle.setBounds (sh);
-    auto cp = row (26);
-    const int half = cp.getWidth() / 2;
-    copyButton.setBounds (cp.removeFromLeft (half).reduced (2, 0));
-    pasteButton.setBounds (cp.reduced (2, 0));
-    labelled (regionL, regionBox);
-    const bool manual = regionBox.getSelectedItemIndex() == 3;
-    labelled (manualStartL, manualStart, pro && manual);
-    labelled (manualEndL, manualEnd, pro && manual);
-    labelled (divisionL, divisionBox);
-    labelled (repeatsL, repeats);
-    labelled (sliceLengthL, sliceLength);
-    labelled (offsetL, offset, pro);
-    labelled (stutterGainL, stutterGain, pro);
-    stutterNote.setBounds (row (16));
-
-    r.removeFromTop (8);
-    effectsTitle.setBounds (row (24));
-    labelled (fadeInL, fadeIn);
-    labelled (fadeOutL, fadeOut);
-    reverseToggle.setBounds (row (24));
-    labelled (lowpassL, lowpass);
-    labelled (highpassL, highpass);
-    effectsNote.setBounds (row (16));
-
-    auto fxHead = [&] (juce::Label& l, juce::ToggleButton& t)
-    {
-        r.removeFromTop (6);
-        auto h = row (24);
-        t.setBounds (h.removeFromRight (96));
-        l.setBounds (h);
-    };
     const auto* pt = ctx.primaryPoint();
     const PointEffects fxNow = pt != nullptr ? pt->effects : PointEffects {};
-    fxHead (charTitle, charToggle);
-    labelled (charTypeL, charTypeBox);
-    labelled (charAmountL, charAmount);
-    labelled (charMixL, charMix, pro);
-    fxHead (modTitle, modToggle);
-    labelled (modTypeL, modTypeBox);
-    labelled (modRateL, modRate);
-    labelled (modDepthL, modDepth);
-    labelled (modMixL, modMix, pro && fxNow.modulation.type != ModulationSettings::Type::Tremolo);
-    fxHead (delayTitle, delayToggle);
-    delaySyncToggle.setBounds (row (24));
-    labelled (delayTimeL, delayTime, ! fxNow.delay.sync);
-    labelled (delayDivisionL, delayDivisionBox, fxNow.delay.sync);
-    labelled (delayFeedbackL, delayFeedback);
-    pingPongToggle.setBounds (row (24));
-    labelled (delayLowpassL, delayLowpass, pro);
-    labelled (delayMixL, delayMix);
-    fxHead (reverbTitle, reverbToggle);
-    labelled (reverbTypeL, reverbTypeBox);
-    labelled (reverbSizeL, reverbSize);
-    labelled (reverbDecayL, reverbDecay);
-    labelled (reverbPredelayL, reverbPredelay, pro);
-    labelled (reverbMixL, reverbMix);
-    labelled (reverbOutputL, reverbOutput, pro);
-    chainNote.setBounds (row (16));
 
-    r.removeFromTop (8);
-    auto shh = row (24);
-    shaperToggle.setBounds (shh.removeFromRight (96));
-    shaperTitle.setBounds (shh);
-    labelled (shaperPresetL, shaperPresetBox);
-    labelled (shapeL, shapeBox);
-    labelled (rateL, rateBox);
-    const int rate = rateBox.getSelectedItemIndex();
-    labelled (cutsL, cuts, rate <= 0);
-    labelled (periodMsL, periodMs, rate == 1);
-    labelled (shaperDivisionL, shaperDivisionBox, rate == 2);
-    labelled (depthL, depth);
-    labelled (openWidthL, openWidth, shapeBox.getSelectedItemIndex() <= 0);
-    labelled (distL, distBox, rate <= 0);
-    labelled (accelL, accel, rate <= 0 && distBox.getSelectedItemIndex() > 0);
-    labelled (shaperAttackL, shaperAttack, pro);
-    labelled (shaperReleaseL, shaperRelease, pro);
-    labelled (patternL, patternEdit, pro);
-    labelled (shaperLengthL, shaperLength, pro);
-    labelled (makeupL, makeup, pro);
-    autoLevelToggle.setBounds (row (24));
-    shaperHint.setBounds (row (16));
-    shaperWholeToggle.setVisible (pro);
+    auto layoutSound = [&]
+    {
+        section ("pitch", soundTitle);
+        pitchL.setVisible (open); pitch.setVisible (open); pitchStatus.setVisible (open);
+        if (open)
+        {
+            auto x = row (27);
+            pitchL.setBounds (x.removeFromLeft (104));
+            pitch.setBounds (x);
+            pitchStatus.setBounds (pitch.getBounds().withTrimmedRight (70).removeFromRight (120).translated (0, -11).withHeight (12));
+        }
+        labelled (formantL, formant);
+    };
+    auto layoutTime = [&]
+    {
+        section ("time", timeTitle);
+        labelled (beatL, beat);
+        labelled (regionStartL, regionStart, pro);
+        labelled (regionEndL, regionEnd, pro);
+    };
+    auto layoutSpace = [&]
+    {
+        section ("space", spaceTitle);
+        labelled (gainL, gain);
+        labelled (posXL, posX);
+        labelled (posYL, posY);
+    };
+    auto layoutStutter = [&]
+    {
+        section ("stutter", stutterTitle, &stutterToggle);
+        copyButton.setVisible (open); pasteButton.setVisible (open);
+        if (open)
+        {
+            auto cp = row (26);
+            const int half = cp.getWidth() / 2;
+            copyButton.setBounds (cp.removeFromLeft (half).reduced (2, 0));
+            pasteButton.setBounds (cp.reduced (2, 0));
+        }
+        labelled (regionL, regionBox);
+        const bool manual = regionBox.getSelectedItemIndex() == 3;
+        labelled (manualStartL, manualStart, pro && manual);
+        labelled (manualEndL, manualEnd, pro && manual);
+        labelled (divisionL, divisionBox);
+        labelled (repeatsL, repeats);
+        labelled (sliceLengthL, sliceLength);
+        labelled (offsetL, offset, pro);
+        labelled (stutterGainL, stutterGain, pro);
+        place (stutterNote, 16);
+    };
+    auto layoutFilters = [&]
+    {
+        section ("filters", effectsTitle);
+        labelled (fadeInL, fadeIn);
+        labelled (fadeOutL, fadeOut);
+        place (reverseToggle, 24);
+        labelled (lowpassL, lowpass);
+        labelled (highpassL, highpass);
+        place (effectsNote, 16);
+    };
+    auto layoutChar = [&]
+    {
+        section ("character", charTitle, &charToggle);
+        labelled (charTypeL, charTypeBox);
+        labelled (charAmountL, charAmount);
+        labelled (charMixL, charMix, pro);
+    };
+    auto layoutMod = [&]
+    {
+        section ("modulation", modTitle, &modToggle);
+        labelled (modTypeL, modTypeBox);
+        labelled (modRateL, modRate);
+        labelled (modDepthL, modDepth);
+        labelled (modMixL, modMix, pro && fxNow.modulation.type != ModulationSettings::Type::Tremolo);
+    };
+    auto layoutDelay = [&]
+    {
+        section ("delay", delayTitle, &delayToggle);
+        place (delaySyncToggle, 24);
+        labelled (delayTimeL, delayTime, ! fxNow.delay.sync);
+        labelled (delayDivisionL, delayDivisionBox, fxNow.delay.sync);
+        labelled (delayFeedbackL, delayFeedback);
+        place (pingPongToggle, 24);
+        labelled (delayLowpassL, delayLowpass, pro);
+        labelled (delayMixL, delayMix);
+    };
+    auto layoutReverb = [&]
+    {
+        section ("reverb", reverbTitle, &reverbToggle);
+        labelled (reverbTypeL, reverbTypeBox);
+        labelled (reverbSizeL, reverbSize);
+        labelled (reverbDecayL, reverbDecay);
+        labelled (reverbPredelayL, reverbPredelay, pro);
+        labelled (reverbMixL, reverbMix);
+        labelled (reverbOutputL, reverbOutput, pro);
+        place (chainNote, 16);
+    };
+    auto layoutShaper = [&]
+    {
+        section ("shaper", shaperTitle, &shaperToggle);
+        labelled (shaperPresetL, shaperPresetBox);
+        labelled (shapeL, shapeBox);
+        labelled (rateL, rateBox);
+        const int rate = rateBox.getSelectedItemIndex();
+        labelled (cutsL, cuts, rate <= 0);
+        labelled (periodMsL, periodMs, rate == 1);
+        labelled (shaperDivisionL, shaperDivisionBox, rate == 2);
+        labelled (depthL, depth);
+        labelled (openWidthL, openWidth, shapeBox.getSelectedItemIndex() <= 0);
+        labelled (distL, distBox, rate <= 0);
+        labelled (accelL, accel, rate <= 0 && distBox.getSelectedItemIndex() > 0);
+        labelled (shaperAttackL, shaperAttack, pro);
+        labelled (shaperReleaseL, shaperRelease, pro);
+        labelled (patternL, patternEdit, pro);
+        labelled (shaperLengthL, shaperLength, pro);
+        labelled (makeupL, makeup, pro);
+        place (autoLevelToggle, 24);
+        place (shaperHint, 16);
+        place (shaperWholeToggle, 24, pro);
+        const bool zone = pro && ! shaperWholeToggle.getToggleState();
+        labelled (shaperRegionStartL, shaperRegionStart, zone);
+        labelled (shaperRegionEndL, shaperRegionEnd, zone);
+        place (curveEditorButton, 26);
+        place (shaperNote, 30);
+    };
+
     if (pro)
-        shaperWholeToggle.setBounds (row (24));
-    const bool zone = pro && ! shaperWholeToggle.getToggleState();
-    labelled (shaperRegionStartL, shaperRegionStart, zone);
-    labelled (shaperRegionEndL, shaperRegionEnd, zone);
-    curveEditorButton.setBounds (row (26));
-    shaperNote.setBounds (row (30));
-
+    {
+        layoutShaper(); layoutStutter(); layoutSound(); layoutFilters(); layoutChar(); layoutMod(); layoutDelay(); layoutReverb();
+        layoutTime(); layoutSpace();
+    }
+    else
+    {
+        layoutSound(); layoutSpace(); layoutTime(); layoutShaper(); layoutStutter(); layoutFilters(); layoutChar(); layoutMod();
+        layoutDelay(); layoutReverb();
+    }
     r.removeFromTop (6);
     return r.getY();
 }

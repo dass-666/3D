@@ -76,6 +76,8 @@ var pointToVar (const Point& p)
     set (voice, "presetName", p.voice.presetName);
     set (voice, "modified", p.voice.modified);
     set (o, "voice", voice);
+    if (p.creativePreset.isNotEmpty())
+        set (o, "creativePreset", p.creativePreset);
 
     set (o, "sound", soundToVar (p.sound));
     set (o, "gainDb", p.gainDb);
@@ -314,6 +316,7 @@ struct Reader
         p.voice.presetId = text (voice, "presetId", presetIds::original);
         p.voice.presetName = text (voice, "presetName", "Original");
         p.voice.modified = flag (voice, "modified", false);
+        p.creativePreset = text (o, "creativePreset", {});
 
         p.sound = sound (o.getProperty ("sound", var()), where + ".sound");
         if (o.hasProperty ("gainDb"))

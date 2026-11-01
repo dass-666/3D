@@ -6,6 +6,8 @@
 #include "ui/CurveEditor.h"
 #include "ui/EditorContext.h"
 #include "ui/HeaderBar.h"
+#include "ui/OutputMeter.h"
+#include "ui/ProSidebar.h"
 #include "ui/PointPanel.h"
 #include "ui/SpatialMap.h"
 #include "ui/Theme.h"
@@ -31,13 +33,19 @@ public:
     TimelineView& getTimeline() noexcept { return timeline; }
     WaveformView& getWaveform() noexcept { return waveform; }
     CurveEditor& getCurveEditor() noexcept { return curveEditor; }
-    void showCurveEditor (bool);
+    void showCurveEditor (bool);                  // full-window curve editor ("Ampliar")
     bool isCurveEditorOpen() const noexcept { return curveOpen; }
+    ProSidebar& getSidebar() noexcept { return sidebar; }
+    PointPanel& getPointPanel() noexcept { return pointPanel; }
+    enum class CenterView { Cuts, Map, Audio };
+    void setCenterView (CenterView);              // Pro only
+    CenterView getCenterView() const noexcept { return centerView; }
+    bool isProMode() const noexcept { return pro; }
 
 private:
     void timerCallback() override;
-    void sceneChanged() override { refreshAudioInfo(); }
-    void selectionChanged() override { refreshToolbar(); }
+    void sceneChanged() override { refreshAudioInfo(); refreshBottomBar(); }
+    void selectionChanged() override { refreshToolbar(); refreshBottomBar(); }
     void setProMode (bool);
     void chooseWav();
     void loadWav (const juce::File&);
@@ -57,6 +65,24 @@ private:
     TimelineView timeline;
     CurveEditor curveEditor;
     bool curveOpen = false;
+    bool pro = false;
+    CenterView centerView = CenterView::Cuts;
+
+    // Pro layout
+    ProSidebar sidebar;
+    juce::TextButton cutsTab { "Cortes" }, mapTab { "Mapa espacial" }, audioTab { "Audio / fragmento" };
+    juce::TextButton listenButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Escuchar este punto") }, abButton { "A/B curva" },
+        prevPointButton { juce::String::fromUTF8 ("\xe2\x97\x80") }, nextPointButton { juce::String::fromUTF8 ("\xe2\x96\xb6") };
+    juce::ToggleButton soloButton { "Solo este punto" };
+    juce::Label pointLabel;
+    OutputMeter meter;
+    juce::Rectangle<int> centerPanel, bottomBar;
+    void stepPoint (int delta);
+    void layoutEasy (juce::Rectangle<int>);
+    void layoutPro (juce::Rectangle<int>);
+    void layoutAudioPanel (juce::Rectangle<int>, bool proTab);
+    void layoutMapPanel (juce::Rectangle<int>);
+    void refreshBottomBar();
 
     juce::TextButton loadButton { "Cargar WAV" }, fragmentButton { juce::String::fromUTF8 ("\xe2\x96\xb6  Fragmento") },
         hostButton { juce::String::fromUTF8 ("Entrada del host \xe2\x96\xbe") };

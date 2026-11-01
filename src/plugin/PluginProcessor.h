@@ -114,6 +114,8 @@ public:
     bool isHostRecording() const noexcept { return capture.isRecording(); }
     double hostRecordedSeconds() const noexcept { return capture.recordedSeconds(); }
     float hostInputPeakDb() const noexcept { return capture.peakDb(); }
+    // Peak of the plugin output since the last call (dBFS, -100 = silence). UI meter; message thread.
+    float takeOutputPeakDb() noexcept { return juce::Decibels::gainToDecibels (outputPeak.exchange (0.0f, std::memory_order_relaxed), -100.0f); }
     static constexpr const char* kHostCaptureName = "Entrada del host (captura)";
 
     // Pitch pre-rendering status (message thread).
@@ -137,6 +139,7 @@ private:
     std::atomic<double> hostSampleRate { 44100.0 };
     std::atomic<bool> previewRequested { false }, fragmentRequested { false }, triggerRequested { false };
     std::atomic<juce::uint64> pointTrigger { 0 };
+    std::atomic<float> outputPeak { 0.0f };
     PitchRenderer pitchRenderer;
     std::atomic<double> currentBeat { 0.0 }, currentSeconds { 0.0 };
     std::atomic<UiMode> uiMode { UiMode::Easy };

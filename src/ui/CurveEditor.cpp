@@ -37,6 +37,12 @@ CurveEditor::CurveEditor (EditorContext& c) : ctx (c)
     addAndMakeVisible (help);
 
     closeButton.onClick = [this] { if (onClose) onClose(); };
+    expandButton.setTooltip (u8 ("Editor a pantalla completa"));
+    expandButton.onClick = [this] { if (onExpand) onExpand(); };
+    generateButton.setColour (juce::TextButton::buttonColourId, theme::violet);
+    generateButton.setTooltip (u8 ("Reparte los cortes del generador (n\xc3\xbamero, distribuci\xc3\xb3n, rampas, patr\xc3\xb3n) "
+                                   "en la selecci\xc3\xb3n o en toda la zona. Lo que se dibuja es lo que suena."));
+    generateButton.onClick = [this] { generatePerfectCuts(); };
     manualButton.setClickingTogglesState (true);
     manualButton.setTooltip (u8 ("Puntos manuales en lugar de la forma generada (se parte de la forma actual)"));
     manualButton.onClick = [this] { setManual (manualButton.getToggleState()); };
@@ -68,7 +74,7 @@ CurveEditor::CurveEditor (EditorContext& c) : ctx (c)
     zoomFitButton.onClick = [this] { fitView(); };
     vZoomInButton.onClick = [this] { vZoom = juce::jmin (16.0, vZoom * 1.5); repaint(); };
     vZoomOutButton.onClick = [this] { vZoom = juce::jmax (1.0, vZoom / 1.5); repaint(); };
-    for (auto* b : { &closeButton, &manualButton, &bakeButton, &undoButton, &redoButton, &copyButton, &pasteButton, &dupButton,
+    for (auto* b : { &closeButton, &expandButton, &generateButton, &manualButton, &bakeButton, &undoButton, &redoButton, &copyButton, &pasteButton, &dupButton,
                      &mirrorButton, &previewButton, &storeBButton, &abButton, &regionButton, &zoomInButton, &zoomOutButton,
                      &zoomFitButton, &vZoomInButton, &vZoomOutButton })
         addAndMakeVisible (*b);
@@ -210,14 +216,20 @@ void CurveEditor::refreshButtons()
     abButton.setEnabled (stateB.has_value());
     abButton.setButtonText (showingB ? "B > A" : "A > B");
     regionButton.setEnabled (has && selection.has_value());
-    for (auto* b : { &manualButton, &bakeButton, &previewButton, &storeBButton })
-        b->setEnabled (has);
+    for (auto* b : { &manualButton, &bakeButton, &previewButton, &storeBButton, &generateButton })
+        b->setEnabled (has && voiceSeconds() > 0.0);
+    generateButton.setButtonText (selection ? u8 ("Generar cortes en la selecci\xc3\xb3n") : u8 ("Generar cortes perfectos"));
 
     juce::String text;
     if (has)
     {
         const double len = voiceSeconds();
-        text << (manual ? juce::String (sh->curve.size()) + " puntos" : u8 ("forma generada"));
+        if (manual)
+            text << u8 ("Curva manual: ") << juce::String (sh->curve.size()) << u8 (" puntos \xc2\xb7 los controles de cortes no se aplican");
+        else
+            text << u8 ("Generador: ") << (sh->rateMode == ShaperSettings::RateMode::Count ? juce::String (sh->cuts) + " cortes"
+                                        : sh->rateMode == ShaperSettings::RateMode::Milliseconds ? juce::String (sh->periodMs, 0) + " ms"
+                                                                                                  : toString (sh->division));
         if (! sh->enabled)
             text << u8 (" \xc2\xb7 Volume Shaper desactivado");
         if (selection)
@@ -411,6 +423,36 @@ void CurveEditor::toggleAB()
     apply (other, true);
 }
 
+void CurveEditor::setEmbedded (bool on)
+{
+    embedded = on;
+    closeButton.setVisible (! on);
+    expandButton.setVisible (on);
+    resized();
+}
+
+void CurveEditor::generatePerfectCuts()
+{
+    const auto* sh = current();
+    const double len = voiceSeconds();
+    if (sh == nullptr || len <= 0.0)
+        return;
+    auto x = *sh;
+    if (selection && selection->second - selection->first > 0.001)
+    {
+        x.wholeVoice = false;
+        x.regionStart = selection->first;
+        x.regionEnd = selection->second;
+        x.lengthMs = 0.0;
+    }
+    x.custom = false;
+    x.enabled = true;
+    double a = 0.0, b = 0.0;
+    if (shaperSpan (x, len, a, b) && x.rateMode == ShaperSettings::RateMode::Count)
+        x.cuts = juce::jlimit (limits::minShaperCuts, juce::jmax (limits::minShaperCuts, maxUsefulCuts (x, b - a)), x.cuts);
+    apply (clamped (x), true);
+}
+
 void CurveEditor::selectionToRegion()
 {
     const auto* sh = current();
@@ -455,7 +497,7 @@ void CurveEditor::setSelection (std::optional<std::pair<double, double>> s)
 juce::Rectangle<float> CurveEditor::canvasArea() const
 {
     auto r = getLocalBounds().toFloat().reduced (12.0f, 8.0f);
-    r.removeFromTop (kToolbarHeight * 2 + 12.0f);
+    r.removeFromTop ((float) toolbarPx);
     r.removeFromBottom (18.0f);
     r.removeFromTop (kRulerHeight);
     return r;
@@ -687,40 +729,47 @@ void CurveEditor::paint (juce::Graphics& g)
 void CurveEditor::resized()
 {
     auto r = getLocalBounds().reduced (12, 8);
+    const int top = r.getY();
     auto row1 = r.removeFromTop ((int) kToolbarHeight);
-    closeButton.setBounds (row1.removeFromRight (80));
+    if (embedded)
+        expandButton.setBounds (row1.removeFromRight (80));
+    else
+        closeButton.setBounds (row1.removeFromRight (80));
     row1.removeFromRight (8);
     previewButton.setBounds (row1.removeFromRight (104));
-    title.setBounds (row1.removeFromLeft (280));
+    title.setBounds (row1.removeFromLeft (juce::jmin (280, row1.getWidth() / 2)));
     info.setBounds (row1);
     r.removeFromTop (6);
-    auto row2 = r.removeFromTop ((int) kToolbarHeight - 4);
-    auto place = [&] (juce::Component& b, int w)
+
+    // Toolbar buttons flow left to right and wrap when the width runs out.
+    const int bh = (int) kToolbarHeight - 4;
+    const int right = r.getRight();
+    int x = r.getX(), y = r.getY();
+    auto place = [&] (juce::Component& b, int w, int gapAfter = 4)
     {
-        b.setBounds (row2.removeFromLeft (w));
-        row2.removeFromLeft (4);
+        if (x + w > right && x > r.getX())
+        {
+            x = r.getX();
+            y += bh + 4;
+        }
+        b.setBounds (x, y, w, bh);
+        x += w + gapAfter;
     };
+    place (generateButton, embedded ? 200 : 210, 10);
     place (manualButton, 70);
-    place (bakeButton, 110);
-    row2.removeFromLeft (8);
+    place (bakeButton, 110, 10);
     place (undoButton, 76);
-    place (redoButton, 72);
-    row2.removeFromLeft (8);
+    place (redoButton, 72, 10);
     place (copyButton, 62);
     place (pasteButton, 58);
     place (dupButton, 72);
-    place (mirrorButton, 66);
-    row2.removeFromLeft (8);
+    place (mirrorButton, 66, 10);
     place (storeBButton, 84);
-    place (abButton, 62);
-    row2.removeFromLeft (8);
-    place (regionButton, 120);
-    auto zoom = row2.removeFromRight (5 * 36 + 16);
+    place (abButton, 62, 10);
+    place (regionButton, 120, 10);
     for (auto* b : { &zoomInButton, &zoomOutButton, &zoomFitButton, &vZoomInButton, &vZoomOutButton })
-    {
-        b->setBounds (zoom.removeFromLeft (36));
-        zoom.removeFromLeft (4);
-    }
+        place (*b, 36);
+    toolbarPx = (y + bh + 8) - top;
     help.setBounds (getLocalBounds().reduced (12, 8).removeFromBottom (16));
     rebuildPeaks();
 }

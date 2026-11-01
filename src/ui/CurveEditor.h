@@ -19,6 +19,11 @@ public:
     ~CurveEditor() override;
 
     std::function<void()> onClose;
+    std::function<void()> onExpand;        // embedded mode: "Ampliar"
+
+    // Embedded in the Pro layout: no "Cerrar", an "Ampliar" button, toolbar wraps to the width.
+    void setEmbedded (bool);
+    bool isEmbedded() const noexcept { return embedded; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -34,6 +39,12 @@ public:
     // ---- actions (also used by the tests) ------------------------------
     void setManual (bool);                 // true: breakpoints (baked from the generator if there are none)
     void bakeFromGenerator();
+    // «Generar cortes perfectos»: the generator (count, distribution, ramps,
+    // pattern) over the time selection if there is one, else the current
+    // span; the count is limited to what the ramps allow. Replaces a manual
+    // curve (its points stay stored: "Manual" brings them back).
+    void generatePerfectCuts();
+    std::optional<std::pair<double, double>> currentSelection() const { return selection; }
     void addPoint (double t, double gain);  // t = 0..1 of the shaped span
     void removePoint (int index);
     void movePoint (int index, double t, double gain, bool commit);
@@ -46,6 +57,7 @@ public:
     bool canUndo() const noexcept { return historyPos > 0; }
     bool canRedo() const noexcept { return historyPos + 1 < history.size(); }
     void storeB();
+    bool hasStateB() const noexcept { return stateB.has_value(); }
     void toggleAB();
     void selectionToRegion();
     void zoomBy (double factor, double aroundFraction);
@@ -78,6 +90,8 @@ private:
     juce::String pointLabel (int index) const;
 
     EditorContext& ctx;
+    bool embedded = false;
+    int toolbarPx = 66;                        // height used by the toolbar rows (set in resized)
     juce::String pointId;                      // repetition being edited
     std::vector<ShaperSettings> history;
     size_t historyPos = 0;
@@ -93,7 +107,8 @@ private:
     double dragAnchor = 0.0;
     juce::Point<float> lastMouse;
 
-    juce::TextButton closeButton { "Cerrar" }, manualButton { "Manual" }, bakeButton { "Generar puntos" },
+    juce::TextButton closeButton { "Cerrar" }, expandButton { "Ampliar" },
+        generateButton { juce::String::fromUTF8 ("Generar cortes perfectos") }, manualButton { "Manual" }, bakeButton { "Generar puntos" },
         undoButton { "Deshacer" }, redoButton { "Rehacer" }, copyButton { "Copiar" }, pasteButton { "Pegar" },
         dupButton { "Duplicar" }, mirrorButton { "Espejo" }, previewButton { juce::String::fromUTF8 ("\xe2\x96\xb6 Escuchar") },
         storeBButton { "Guardar B" }, abButton { "A/B" }, regionButton { juce::String::fromUTF8 ("Selecci\xc3\xb3n \xe2\x86\x92 zona") },

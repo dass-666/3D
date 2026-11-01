@@ -9,7 +9,7 @@ const juce::String dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
 }
 
 SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
-    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx)
+    : AudioProcessorEditor (p), processor (p), ctx (p), header (ctx), waveform (ctx), map (ctx), pointPanel (ctx), timeline (ctx), curveEditor (ctx), sidebar (ctx)
 {
     ctx.addListener (this);
 
@@ -20,7 +20,49 @@ SpatialEchoEditor::SpatialEchoEditor (SpatialEchoProcessor& p)
     header.onModeChange = [this] (bool pro) { setProMode (pro); };
     addChildComponent (curveEditor);
     curveEditor.onClose = [this] { showCurveEditor (false); };
+    curveEditor.onExpand = [this] { showCurveEditor (true); };
     pointPanel.onOpenCurveEditor = [this] { showCurveEditor (true); };
+
+    // Pro layout: sidebar, centre tabs, bottom bar.
+    addChildComponent (sidebar);
+    sidebar.onCategory = [this] (const juce::String& id)
+    {
+        if (id == "space")
+            setCenterView (CenterView::Map);
+        else if (id == "shaper")
+            setCenterView (CenterView::Cuts);
+        pointPanel.showSection (id);
+    };
+    for (auto [b, v] : { std::pair { &cutsTab, CenterView::Cuts }, std::pair { &mapTab, CenterView::Map }, std::pair { &audioTab, CenterView::Audio } })
+    {
+        b->setRadioGroupId (77);
+        b->setClickingTogglesState (true);
+        b->setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+        b->setColour (juce::TextButton::buttonOnColourId, theme::violet.withAlpha (0.7f));
+        b->onClick = [this, v] { setCenterView (v); };
+        addChildComponent (*b);
+    }
+    listenButton.setColour (juce::TextButton::buttonColourId, theme::blue);
+    listenButton.setTooltip (u8 ("Reproduce solo la repetici\xc3\xb3n seleccionada, ahora"));
+    listenButton.onClick = [this] { if (const auto* pt = ctx.primaryPoint()) processor.requestTriggerPoint (pt->id); };
+    soloButton.setTooltip (u8 ("Solo: si alguna repetici\xc3\xb3n est\xc3\xa1 en solo, solo suenan las que lo est\xc3\xa1n"));
+    soloButton.onClick = [this]
+    {
+        const bool on = soloButton.getToggleState();
+        const auto ids = ctx.selection();
+        ctx.edit ([&] (Scene& s) { for (auto& id : ids) if (auto* pt = findPoint (s, id)) pt->solo = on; });
+    };
+    abButton.setTooltip (u8 ("Alterna la curva A (actual) con la B guardada en el editor de cortes"));
+    abButton.onClick = [this] { curveEditor.toggleAB(); refreshBottomBar(); };
+    prevPointButton.onClick = [this] { stepPoint (-1); };
+    nextPointButton.onClick = [this] { stepPoint (+1); };
+    pointLabel.setFont (theme::font (13.0f, true));
+    pointLabel.setJustificationType (juce::Justification::centred);
+    pointLabel.setColour (juce::Label::textColourId, theme::text);
+    for (juce::Component* c : { (juce::Component*) &listenButton, (juce::Component*) &soloButton, (juce::Component*) &abButton,
+                                (juce::Component*) &prevPointButton, (juce::Component*) &nextPointButton, (juce::Component*) &pointLabel,
+                                (juce::Component*) &meter })
+        addChildComponent (c);
 
     loadButton.setColour (juce::TextButton::buttonColourId, theme::blue.withAlpha (0.85f));
     loadButton.onClick = [this] { chooseWav(); };
@@ -107,29 +149,82 @@ SpatialEchoEditor::~SpatialEchoEditor()
 void SpatialEchoEditor::showCurveEditor (bool open)
 {
     curveOpen = open;
-    curveEditor.setVisible (open);
+    curveEditor.setEmbedded (! open && pro && centerView == CenterView::Cuts);
+    curveEditor.setVisible (open || (pro && centerView == CenterView::Cuts));
     if (open)
         curveEditor.toFront (true);
     resized();
 }
 
-void SpatialEchoEditor::setProMode (bool pro)
+void SpatialEchoEditor::setCenterView (CenterView v)
 {
+    centerView = v;
+    cutsTab.setToggleState (v == CenterView::Cuts, juce::dontSendNotification);
+    mapTab.setToggleState (v == CenterView::Map, juce::dontSendNotification);
+    audioTab.setToggleState (v == CenterView::Audio, juce::dontSendNotification);
+    showCurveEditor (curveOpen);
+}
+
+void SpatialEchoEditor::setProMode (bool shouldBePro)
+{
+    pro = shouldBePro;
     processor.setUiMode (pro ? UiMode::Pro : UiMode::Easy);
     header.setProMode (pro);
     pointPanel.setProMode (pro);
     timeline.setProMode (pro);
     diagnosticsLabel.setVisible (pro);
     logToggle.setVisible (pro);
+    sidebar.setVisible (pro);
+    for (auto* b : { &cutsTab, &mapTab, &audioTab, &listenButton, &abButton, &prevPointButton, &nextPointButton })
+        b->setVisible (pro);
+    soloButton.setVisible (pro);
+    pointLabel.setVisible (pro);
+    meter.setVisible (pro);
     if (pro)
         refreshDiagnostics();
-    resized();
+    refreshBottomBar();
+    setCenterView (centerView);  // also shows/hides the embedded curve editor and lays out
+}
+
+void SpatialEchoEditor::stepPoint (int delta)
+{
+    const auto& pts = ctx.scene().points;
+    if (pts.empty())
+        return;
+    int idx = -1;
+    const auto id = ctx.primary();
+    for (size_t i = 0; i < pts.size(); ++i)
+        if (pts[i].id == id)
+            idx = (int) i;
+    const int n = (int) pts.size();
+    idx = idx < 0 ? (delta > 0 ? 0 : n - 1) : ((idx + delta) % n + n) % n;
+    ctx.select (pts[(size_t) idx].id, false);
+}
+
+void SpatialEchoEditor::refreshBottomBar()
+{
+    const auto* pt = ctx.primaryPoint();
+    const int n = (int) ctx.scene().points.size();
+    int idx = 0;
+    for (int i = 0; i < n; ++i)
+        if (ctx.scene().points[(size_t) i].id == ctx.primary())
+            idx = i + 1;
+    pointLabel.setText (pt != nullptr ? "Punto " + juce::String (idx) + " / " + juce::String (n) : juce::String (n) + " puntos",
+                        juce::dontSendNotification);
+    listenButton.setEnabled (pt != nullptr && processor.getSourceStatus().loaded);
+    soloButton.setEnabled (pt != nullptr);
+    soloButton.setToggleState (pt != nullptr && pt->solo, juce::dontSendNotification);
+    abButton.setEnabled (pt != nullptr && curveEditor.hasStateB());
+    prevPointButton.setEnabled (n > 1);
+    nextPointButton.setEnabled (n > 1);
 }
 
 void SpatialEchoEditor::timerCallback()
 {
     ctx.refreshIfChanged();
     header.updateTransport();
+    if (meter.isVisible())
+        meter.push (processor.takeOutputPeakDb());
     map.updateSounding();
     timeline.updatePlayhead();
     if (++timerTicks % 8 == 0)
@@ -258,8 +353,126 @@ void SpatialEchoEditor::loadWav (const juce::File& f)
 void SpatialEchoEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
-    theme::drawPanel (g, audioPanel.toFloat(), "AUDIO" + dot + "FRAGMENTO");
-    theme::drawPanel (g, mapPanel.toFloat(), u8 ("D\xc3\x93NDE SUENA") + dot + "MAPA ESPACIAL");
+    if (curveOpen)
+        return;
+    if (! pro)
+    {
+        theme::drawPanel (g, audioPanel.toFloat(), "AUDIO" + dot + "FRAGMENTO");
+        theme::drawPanel (g, mapPanel.toFloat(), u8 ("D\xc3\x93NDE SUENA") + dot + "MAPA ESPACIAL");
+        return;
+    }
+    if (centerView == CenterView::Audio)
+        theme::drawPanel (g, centerPanel.toFloat(), "AUDIO" + dot + "FRAGMENTO");
+    else if (centerView == CenterView::Map)
+        theme::drawPanel (g, centerPanel.toFloat(), u8 ("D\xc3\x93NDE SUENA") + dot + "MAPA ESPACIAL");
+    theme::drawPanel (g, bottomBar.toFloat());
+}
+
+void SpatialEchoEditor::layoutAudioPanel (juce::Rectangle<int> panel, bool proTab)
+{
+    auto a = panel.reduced (14, 10);
+    a.removeFromTop (20);
+    auto top = a.removeFromTop (30);
+    loadButton.setBounds (top.removeFromLeft (120));
+    top.removeFromLeft (8);
+    hostButton.setBounds (top.removeFromLeft (190));
+    top.removeFromLeft (12);
+    fragmentButton.setBounds (top.removeFromRight (120));
+    top.removeFromRight (8);
+    expandButton.setVisible (! proTab);
+    if (! proTab)
+    {
+        expandButton.setBounds (top.removeFromRight (76));
+        top.removeFromRight (6);
+    }
+    zoomFitButton.setBounds (top.removeFromRight (46));
+    zoomSelButton.setBounds (top.removeFromRight (42));
+    zoomOutButton.setBounds (top.removeFromRight (30));
+    zoomInButton.setBounds (top.removeFromRight (30));
+    top.removeFromRight (12);
+    fragmentInfo.setBounds (top.removeFromRight (236));
+    audioInfo.setBounds (top);
+    a.removeFromTop (8);
+    waveform.setBounds (a);
+}
+
+void SpatialEchoEditor::layoutMapPanel (juce::Rectangle<int> panel)
+{
+    auto m = panel.reduced (14, 10);
+    auto tools = m.removeFromTop (26);
+    tools.removeFromLeft (200);
+    countLabel.setBounds (tools.removeFromRight (60));
+    for (auto* b : { &addButton, &duplicateButton, &muteButton, &deleteButton })
+    {
+        b->setBounds (tools.removeFromLeft (86));
+        tools.removeFromLeft (5);
+    }
+    map.setBounds (m);
+}
+
+void SpatialEchoEditor::layoutEasy (juce::Rectangle<int> r)
+{
+    audioPanel = r.removeFromTop (expanded ? juce::jmin (360, r.getHeight() / 2) : 156);
+    layoutAudioPanel (audioPanel, false);
+    r.removeFromTop (10);
+    auto timelineArea = r.removeFromBottom (juce::jlimit (140, 200, r.getHeight() / 4));
+    timeline.setBounds (timelineArea);
+    r.removeFromBottom (10);
+    pointPanel.setBounds (r.removeFromRight (juce::jlimit (330, 420, r.getWidth() / 3)));
+    r.removeFromRight (10);
+    mapPanel = r;
+    layoutMapPanel (mapPanel);
+}
+
+void SpatialEchoEditor::layoutPro (juce::Rectangle<int> r)
+{
+    bottomBar = r.removeFromBottom (44);
+    {
+        auto b = bottomBar.reduced (10, 7);
+        listenButton.setBounds (b.removeFromLeft (190));
+        b.removeFromLeft (10);
+        soloButton.setBounds (b.removeFromLeft (140));
+        b.removeFromLeft (6);
+        abButton.setBounds (b.removeFromLeft (84));
+        meter.setBounds (b.removeFromRight (juce::jmin (260, b.getWidth() / 3)));
+        b.removeFromRight (12);
+        auto nav = b.withSizeKeepingCentre (juce::jmin (240, b.getWidth()), b.getHeight());
+        prevPointButton.setBounds (nav.removeFromLeft (40));
+        nextPointButton.setBounds (nav.removeFromRight (40));
+        pointLabel.setBounds (nav);
+    }
+    r.removeFromBottom (8);
+    timeline.setBounds (r.removeFromBottom (juce::jlimit (120, 170, r.getHeight() / 5)));
+    r.removeFromBottom (8);
+
+    sidebar.setBounds (r.removeFromLeft (juce::jlimit (216, 250, r.getWidth() / 6)));
+    r.removeFromLeft (8);
+    pointPanel.setBounds (r.removeFromRight (juce::jlimit (330, 420, (int) (r.getWidth() * 0.38))));
+    r.removeFromRight (8);
+
+    auto tabs = r.removeFromTop (26);
+    const int tw = juce::jmin (150, tabs.getWidth() / 3);
+    cutsTab.setBounds (tabs.removeFromLeft (tw));
+    mapTab.setBounds (tabs.removeFromLeft (tw));
+    audioTab.setBounds (tabs.removeFromLeft (tw));
+    r.removeFromTop (4);
+    centerPanel = r;
+    const bool showCuts = centerView == CenterView::Cuts, showMap = centerView == CenterView::Map, showAudio = centerView == CenterView::Audio;
+    for (juce::Component* c : { (juce::Component*) &map, (juce::Component*) &addButton, (juce::Component*) &duplicateButton,
+                                (juce::Component*) &muteButton, (juce::Component*) &deleteButton, (juce::Component*) &countLabel })
+        c->setVisible (showMap);
+    for (juce::Component* c : { (juce::Component*) &waveform, (juce::Component*) &loadButton, (juce::Component*) &hostButton,
+                                (juce::Component*) &fragmentButton, (juce::Component*) &zoomInButton, (juce::Component*) &zoomOutButton,
+                                (juce::Component*) &zoomSelButton, (juce::Component*) &zoomFitButton, (juce::Component*) &audioInfo,
+                                (juce::Component*) &fragmentInfo })
+        c->setVisible (showAudio);
+    expandButton.setVisible (false);
+    if (showCuts && ! curveOpen)
+        curveEditor.setBounds (centerPanel);
+    else if (showMap)
+        layoutMapPanel (centerPanel);
+    else if (showAudio)
+        layoutAudioPanel (centerPanel, true);
 }
 
 void SpatialEchoEditor::resized()
@@ -280,51 +493,23 @@ void SpatialEchoEditor::resized()
 
     r.reduce (12, 10);
     if (curveOpen)
-        curveEditor.setBounds (r);  // covers the audio editor, map, panel and timeline until closed
-    audioPanel = r.removeFromTop (expanded ? juce::jmin (360, r.getHeight() / 2) : 156);
+        curveEditor.setBounds (r);  // covers everything below the header until closed
+    if (pro)
     {
-        auto a = audioPanel.reduced (14, 10);
-        a.removeFromTop (20);
-        auto top = a.removeFromTop (30);
-        loadButton.setBounds (top.removeFromLeft (120));
-        top.removeFromLeft (8);
-        hostButton.setBounds (top.removeFromLeft (190));
-        top.removeFromLeft (12);
-        fragmentButton.setBounds (top.removeFromRight (120));
-        top.removeFromRight (8);
-        expandButton.setBounds (top.removeFromRight (76));
-        top.removeFromRight (6);
-        zoomFitButton.setBounds (top.removeFromRight (46));
-        zoomSelButton.setBounds (top.removeFromRight (42));
-        zoomOutButton.setBounds (top.removeFromRight (30));
-        zoomInButton.setBounds (top.removeFromRight (30));
-        top.removeFromRight (12);
-        fragmentInfo.setBounds (top.removeFromRight (236));
-        audioInfo.setBounds (top);
-        a.removeFromTop (8);
-        waveform.setBounds (a);
+        layoutPro (r);
     }
-    r.removeFromTop (10);
-
-    auto timelineArea = r.removeFromBottom (juce::jlimit (140, 200, r.getHeight() / 4));
-    timeline.setBounds (timelineArea);
-    r.removeFromBottom (10);
-
-    pointPanel.setBounds (r.removeFromRight (juce::jlimit (330, 420, r.getWidth() / 3)));
-    r.removeFromRight (10);
-    mapPanel = r;
+    else
     {
-        auto m = mapPanel.reduced (14, 10);
-        auto tools = m.removeFromTop (26);
-        tools.removeFromLeft (200);
-        countLabel.setBounds (tools.removeFromRight (60));
-        for (auto* b : { &addButton, &duplicateButton, &muteButton, &deleteButton })
-        {
-            b->setBounds (tools.removeFromLeft (86));
-            tools.removeFromLeft (5);
-        }
-        map.setBounds (m);
+        for (juce::Component* c : { (juce::Component*) &map, (juce::Component*) &addButton, (juce::Component*) &duplicateButton,
+                                    (juce::Component*) &muteButton, (juce::Component*) &deleteButton, (juce::Component*) &countLabel,
+                                    (juce::Component*) &waveform, (juce::Component*) &loadButton, (juce::Component*) &hostButton,
+                                    (juce::Component*) &fragmentButton, (juce::Component*) &zoomInButton, (juce::Component*) &zoomOutButton,
+                                    (juce::Component*) &zoomSelButton, (juce::Component*) &zoomFitButton, (juce::Component*) &audioInfo,
+                                    (juce::Component*) &fragmentInfo, (juce::Component*) &expandButton })
+            c->setVisible (true);
+        layoutEasy (r);
     }
+    repaint();
 }
 
 } // namespace ses

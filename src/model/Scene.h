@@ -304,6 +304,7 @@ struct Point
     Timing timing;
     PlayRegion region;             // which part of the fragment this repetition plays
     VoiceRef voice;
+    juce::String creativePreset;   // id of the last creative preset applied (display only; edits keep it)
     SoundSettings sound;
     double gainDb = 0.0;           // -36..+12 dB, independent of pitch and of the global Output
     StutterSettings stutter;

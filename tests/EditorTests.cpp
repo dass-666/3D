@@ -208,10 +208,14 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
     ctx.select (id, false);
 
     auto& ce = ed.getCurveEditor();
-    CHECK (! ce.isVisible());
-    ed.showCurveEditor (true);
+    CHECK (ce.isVisible());      // Pro: embedded in the centre column
+    CHECK (ce.isEmbedded());
+    const int embeddedWidth = ce.getBounds().getWidth();
+    ed.showCurveEditor (true);   // "Ampliar": full window
     CHECK (ce.isVisible());
+    CHECK (! ce.isEmbedded());
     CHECK (ce.getBounds().getWidth() > 1000);
+    CHECK (ce.getBounds().getWidth() > embeddedWidth);
     CHECK (ce.voiceSeconds() > 0.5);
     snapshot (ed, "ui-curve-generated.png");
 
@@ -302,7 +306,9 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
     CHECK (ce.fractionAt (ce.canvasArea().getRight()) <= 1.0);
     ce.fitView();
     ed.showCurveEditor (false);
-    CHECK (! ce.isVisible());
+    CHECK (ce.isVisible());
+    CHECK (ce.isEmbedded());
+    CHECK (ce.getBounds().getWidth() == embeddedWidth);
 
     // Everything the editor did survives a state round trip.
     juce::MemoryBlock state;

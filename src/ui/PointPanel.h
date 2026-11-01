@@ -6,8 +6,47 @@
 
 #include "ui/EditorContext.h"
 
+#include <map>
+
 namespace ses
 {
+
+// Clickable section title with a chevron: click folds/unfolds the section.
+class SectionHeader final : public juce::Component
+{
+public:
+    SectionHeader() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    void setText (const juce::String& t, juce::NotificationType = juce::dontSendNotification) { text = t; repaint(); }
+    void setFont (const juce::Font& f) { font = f; }
+    void setColour (int, juce::Colour c) { colour = c; }
+    void setOpen (bool o) { open = o; repaint(); }
+    bool isOpen() const noexcept { return open; }
+    std::function<void()> onToggle;
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colours::white.withAlpha (isMouseOver() ? 0.06f : 0.03f));
+        g.fillRoundedRectangle (r, 4.0f);
+        juce::Path chev;
+        const auto c = r.removeFromLeft (16.0f).getCentre();
+        if (open)
+            chev.addTriangle (c.x - 4.0f, c.y - 2.0f, c.x + 4.0f, c.y - 2.0f, c.x, c.y + 3.0f);
+        else
+            chev.addTriangle (c.x - 2.0f, c.y - 4.0f, c.x - 2.0f, c.y + 4.0f, c.x + 3.0f, c.y);
+        g.setColour (colour);
+        g.fillPath (chev);
+        g.setFont (font);
+        g.drawText (text, r.withTrimmedLeft (4.0f), juce::Justification::centredLeft, true);
+    }
+    void mouseDown (const juce::MouseEvent&) override { open = ! open; repaint(); if (onToggle) onToggle(); }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+private:
+    juce::String text;
+    juce::Font font { juce::FontOptions (12.0f) };
+    juce::Colour colour { juce::Colours::white };
+    bool open = true;
+};
 
 class PointPanel final : public juce::Component, private EditorContext::Listener
 {
@@ -22,6 +61,7 @@ public:
 
     static std::optional<StutterSettings> stutterClipboard;  // "copy settings between points"
     std::function<void()> onOpenCurveEditor;                 // "Editor de curva" button (Pro)
+    void showSection (const juce::String& categoryId);     // expands the section and scrolls to it
 
 private:
     void sceneChanged() override { refresh(); }
@@ -32,6 +72,8 @@ private:
     void setupSlider (juce::Slider&, juce::Label&, const juce::String& name, double lo, double hi, double step,
                       const juce::String& suffix);
     int layoutContent (int width);  // returns the height used
+    SectionHeader* headerFor (const juce::String& categoryId);
+    std::map<juce::String, int> sectionY;   // content y of each section header (for showSection)
 
     EditorContext& ctx;
     bool pro = false;
@@ -49,7 +91,8 @@ private:
     juce::TextButton duplicateButton { "Duplicar" }, deleteButton { "Eliminar" };
 
     // Stutter
-    juce::Label stutterTitle, stutterNote;
+    SectionHeader soundTitle, timeTitle, spaceTitle, stutterTitle;
+    juce::Label stutterNote;
     juce::ToggleButton stutterToggle { "Activar" };
     juce::ComboBox regionBox, divisionBox;
     juce::Slider repeats, sliceLength, offset, stutterGain, manualStart, manualEnd;
@@ -57,11 +100,13 @@ private:
     juce::TextButton copyButton { "Copiar Stutter" }, pasteButton { "Pegar Stutter" };
 
     // Effects with real processing
-    juce::Label effectsTitle, effectsNote, fadeInL, fadeOutL, lowpassL, highpassL;
+    SectionHeader effectsTitle;
+    juce::Label effectsNote, fadeInL, fadeOutL, lowpassL, highpassL;
     juce::Slider fadeIn, fadeOut, lowpass, highpass;
     juce::ToggleButton reverseToggle { juce::String::fromUTF8 ("Reverse (al rev\xc3\xa9s)") };
     // Effect chain (character -> modulation -> delay -> reverb)
-    juce::Label charTitle, modTitle, delayTitle, reverbTitle, chainNote;
+    SectionHeader charTitle, modTitle, delayTitle, reverbTitle;
+    juce::Label chainNote;
     juce::ToggleButton charToggle { "Activar" }, modToggle { "Activar" }, delayToggle { "Activar" }, reverbToggle { "Activar" },
                        delaySyncToggle { "Sincronizar al BPM" }, pingPongToggle { "Ping-pong" };
     juce::ComboBox charTypeBox, modTypeBox, delayDivisionBox, reverbTypeBox;
@@ -72,7 +117,8 @@ private:
                 reverbMixL, reverbOutputL;
 
     // Volume Shaper
-    juce::Label shaperTitle, shaperNote;
+    SectionHeader shaperTitle;
+    juce::Label shaperNote;
     juce::TextButton curveEditorButton { juce::String::fromUTF8 ("Editor de curva\xe2\x80\xa6") };
     juce::ToggleButton shaperToggle { "Activar" }, shaperWholeToggle { juce::String::fromUTF8 ("Toda la repetici\xc3\xb3n") },
                        autoLevelToggle { juce::String::fromUTF8 ("Nivel autom\xc3\xa1tico (hasta +6 dB)") };
