@@ -35,14 +35,14 @@ HeaderBar::HeaderBar (EditorContext& c) : ctx (c)
     addAndMakeVisible (sceneName);
 
     sceneMenu.setTooltip (u8 ("Escena = el proyecto del plugin completo: todas las repeticiones y el fragmento (.sesscene). "
-                              "Para un sonido reutilizable usa \xc2\xabGuardar preset\xc2\xbb; para audio, \xc2\xabExportar a Playlist\xc2\xbb."));
+                              "Para un sonido reutilizable usa \xc2\xabGuardar preset\xc2\xbb; para audio, \xc2\xab" "Exportar a Playlist\xc2\xbb."));
     sceneMenu.onClick = [this]
     {
         juce::PopupMenu m;
         m.addSectionHeader (u8 ("Escena completa: repeticiones + fragmento"));
         m.addItem (1, u8 ("Guardar escena (.sesscene)\xe2\x80\xa6"));
         m.addItem (2, u8 ("Cargar escena (.sesscene)\xe2\x80\xa6"));
-        m.addItem (3, u8 ("Un sonido reutilizable: \xc2\xabGuardar preset\xc2\xbb. Audio: \xc2\xabExportar a Playlist\xc2\xbb."), false, false);
+        m.addItem (3, u8 ("Un sonido reutilizable: \xc2\xabGuardar preset\xc2\xbb. Audio: \xc2\xab" "Exportar a Playlist\xc2\xbb."), false, false);
         m.addSeparator();
         juce::PopupMenu size;
         const int cur = ctx.processor.getUiScalePercent();
