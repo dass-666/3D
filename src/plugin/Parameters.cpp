@@ -21,6 +21,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { trigger, version }, "Trigger", false));
 
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { bypass, version }, "Bypass", false));
+
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { protect, version }, "Protection", true));
+
     return layout;
 }
 

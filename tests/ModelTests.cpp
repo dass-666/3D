@@ -1,6 +1,10 @@
 #include "model/DemoScene.h"
 #include "model/Scene.h"
+#include "model/UserPresets.h"
 #include "model/VoicePresets.h"
+
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -17,12 +21,12 @@ TEST_CASE ("Demo scene matches the agreed specification")
     CHECK (scene.mixPercent == 70.0);
     CHECK (scene.spatialMode == SpatialMode::Stereo);
 
-    struct Expected { int number; double x, y; juce::String preset; double pitch, character, speed, volume, beat; };
+    struct Expected { int number; double x, y; juce::String preset; double pitch, character, speed, gainDb, beat; };
     const Expected expected[] {
-        { 1, 18, 49, presetIds::original, 0, 0, 100, 100, 1 },
-        { 2, 82, 49, presetIds::agudo, 7, 25, 100, 85, 2 },
-        { 3, 50, 18, presetIds::monster, -7, 40, 100, 90, 3 },
-        { 4, 50, 83, presetIds::grave, -5, 25, 100, 75, 4 },
+        { 1, 18, 49, presetIds::original, 0, 0, 100, 0.0, 1 },
+        { 2, 82, 49, presetIds::agudo, 7, 25, 100, -1.5, 2 },
+        { 3, 50, 18, presetIds::monster, -7, 40, 100, -1.0, 3 },
+        { 4, 50, 83, presetIds::grave, -5, 25, 100, -2.5, 4 },
     };
 
     for (size_t i = 0; i < 4; ++i)
@@ -33,7 +37,7 @@ TEST_CASE ("Demo scene matches the agreed specification")
         CHECK (p.position == Position { e.x, e.y });
         CHECK (p.voice.presetId == e.preset);
         CHECK (p.sound == SoundSettings { e.pitch, e.character, e.speed });
-        CHECK (p.volumePercent == e.volume);
+        CHECK (p.gainDb == e.gainDb);
         CHECK (p.timing.beat == e.beat);
     }
 }
@@ -104,7 +108,7 @@ TEST_CASE ("Applying a preset to several points changes only their sound")
         CHECK (p.number == b.number);
         CHECK (p.position == b.position);
         CHECK (p.timing == b.timing);
-        CHECK (p.volumePercent == b.volumePercent);
+        CHECK (p.gainDb == b.gainDb);
 
         if (i == 0 || i == 2)
         {
@@ -132,8 +136,8 @@ TEST_CASE ("Editing a point's sound marks it as modified, values are clamped")
 
     REQUIRE (movePoint (scene, id, { -10, 250 }));
     CHECK (p->position == Position { 0, 100 });
-    REQUIRE (setVolume (scene, id, 140));
-    CHECK (p->volumePercent == 100.0);
+    REQUIRE (setGainDb (scene, id, 40));
+    CHECK (p->gainDb == 12.0);
 }
 
 TEST_CASE ("Duplicate creates a new identity one step later")
@@ -169,7 +173,7 @@ TEST_CASE ("New points start one rhythm step after the latest point")
 TEST_CASE ("Voice preset library is independent of scenes")
 {
     VoicePresetLibrary lib;
-    CHECK (lib.all().size() == 6);
+    CHECK (lib.all().size() == 8);
     CHECK (lib.userPresets().empty());
 
     // Built-ins cannot be overwritten or removed.
@@ -191,13 +195,109 @@ TEST_CASE ("Voice preset library is independent of scenes")
     CHECK (scene.points[0].voice.presetName == "Mi voz");
 }
 
-TEST_CASE ("Built-in presets that need unimplemented processing are flagged")
+TEST_CASE ("Built-in voice presets are all processed for real; Monster/Robot/Fantasma differ by their effect chain")
 {
     VoicePresetLibrary lib;
-    CHECK_FALSE (lib.find (presetIds::original)->needsFutureProcessing);
-    CHECK_FALSE (lib.find (presetIds::agudo)->needsFutureProcessing);
-    CHECK_FALSE (lib.find (presetIds::grave)->needsFutureProcessing);
-    CHECK (lib.find (presetIds::monster)->needsFutureProcessing);
-    CHECK (lib.find (presetIds::robot)->needsFutureProcessing);
-    CHECK (lib.find (presetIds::fantasma)->needsFutureProcessing);
+    for (auto& p : lib.all())
+        CHECK_FALSE (p.needsFutureProcessing);
+    auto scene = makeDemoScene();
+    const auto id = scene.points[0].id;
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::robot));
+    CHECK (findPoint (scene, id)->effects.character.enabled);
+    CHECK (findPoint (scene, id)->effects.character.type == CharacterSettings::Type::Robot);
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::fantasma));
+    CHECK (findPoint (scene, id)->effects.reverb.enabled);
+    CHECK (findPoint (scene, id)->effects.modulation.enabled);
+    CHECK (findPoint (scene, id)->sound.formantSemitones > 0.0);
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::monster));
+    CHECK (findPoint (scene, id)->effects.character.type == CharacterSettings::Type::Saturation);
+    CHECK (findPoint (scene, id)->sound.formantSemitones < 0.0);
+    // Plain voice presets leave the chain alone.
+    applyVoicePreset (scene, { id }, *lib.find (presetIds::agudo));
+    CHECK (findPoint (scene, id)->effects.character.type == CharacterSettings::Type::Saturation);
+    CHECK (findPoint (scene, id)->sound.formantSemitones == 0.0);
+    // Every creative preset only uses settings that exist and survive clamping.
+    for (auto& cp : pointPresets())
+    {
+        Point q;
+        applyPointPreset (q, cp);
+        CHECK (q.effects == clamped (q.effects));
+        CHECK (q.shaper == clamped (q.shaper));
+        CHECK (q.sound == clamped (q.sound));
+        CHECK ((cp.sound || cp.shaper || cp.effects));
+    }
+    CHECK (pointPresets().size() == 13);
+}
+
+TEST_CASE ("User presets: saved to a file, reloaded, favourites kept, removal, applied to a point without touching position or timing")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-presets-" + juce::String (juce::Random::getSystemRandom().nextInt (1 << 30)));
+    const auto file = dir.getChildFile ("presets.json");
+    {
+        UserPresetStore store (file);
+        Point src;
+        src.id = "x"; src.number = 7;
+        src.position = { 10.0, 90.0 };
+        src.timing.beat = 3.0;
+        src.gainDb = -4.0;
+        src.sound.pitchSemitones = 5.0;
+        src.shaper.enabled = true; src.shaper.cuts = 24; src.shaper.accelPercent = 30.0;
+        src.effects.delay.enabled = true; src.effects.chainOrder = "dcmr";
+        const auto id = store.addFromPoint ("Mi corte", "prueba", src);
+        CHECK (id.startsWith ("user."));
+        CHECK (store.presets().size() == 1);
+        store.setFavourite (id, true);
+        store.setFavourite ("fast-gate", true);
+        CHECK (store.isFavourite (id));
+        CHECK (file.existsAsFile());
+
+        Point dst;
+        dst.id = "y"; dst.number = 2; dst.position = { 50.0, 50.0 }; dst.timing.beat = 1.0; dst.gainDb = 0.0;
+        applyUserPreset (dst, *store.find (id));
+        CHECK (dst.position == Position { 50.0, 50.0 });
+        CHECK_THAT (dst.timing.beat, Catch::Matchers::WithinAbs (1.0, 1e-12));
+        CHECK_THAT (dst.gainDb, Catch::Matchers::WithinAbs (0.0, 1e-12));
+        CHECK (dst.id == "y");
+        CHECK (dst.number == 2);
+        CHECK_THAT (dst.sound.pitchSemitones, Catch::Matchers::WithinAbs (5.0, 1e-12));
+        CHECK (dst.shaper.cuts == 24);
+        CHECK (dst.effects.delay.enabled);
+        CHECK (dst.effects.chainOrder == "dcmr");
+        CHECK (dst.creativePreset == id);
+    }
+    {
+        UserPresetStore store (file);
+        REQUIRE (store.load().wasOk());
+        REQUIRE (store.presets().size() == 1);
+        const auto& p = store.presets()[0];
+        CHECK (p.name == "Mi corte");
+        CHECK (p.content.shaper.cuts == 24);
+        CHECK_THAT (p.content.shaper.accelPercent, Catch::Matchers::WithinAbs (30.0, 1e-9));
+        CHECK (p.content.effects.chainOrder == "dcmr");
+        CHECK (store.isFavourite (p.id));
+        CHECK (store.isFavourite ("fast-gate"));
+        CHECK (store.remove (p.id));
+        CHECK (store.presets().empty());
+        CHECK (! store.isFavourite (p.id));
+        CHECK (! store.remove ("nope"));
+    }
+    // Damaged file: an error, not a crash; an empty id is regenerated.
+    file.replaceWithText ("{ \"format\": \"spatial-echo-user-presets\", \"formatVersion\": 1, \"presets\": [ { \"name\": \"sin id\", \"point\": {} }, 5 ] }");
+    {
+        UserPresetStore store (file);
+        REQUIRE (store.load().wasOk());
+        REQUIRE (store.presets().size() == 1);
+        CHECK (store.presets()[0].id.startsWith ("user."));
+    }
+    file.replaceWithText ("not json");
+    {
+        UserPresetStore store (file);
+        CHECK (store.load().failed());
+        CHECK (store.loadFailed());
+        store.setFavourite ("x", true);  // must not overwrite the unreadable file
+        CHECK (file.loadFileAsString() == "not json");
+        CHECK (file.getSiblingFile ("presets-ilegible.json").existsAsFile());
+    }
+    dir.deleteRecursively();
 }

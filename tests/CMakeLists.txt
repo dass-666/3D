@@ -7,7 +7,17 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(ses_tests
     ModelTests.cpp
     SerializationTests.cpp
-    PluginStateTests.cpp)
+    PluginStateTests.cpp
+    TransportTests.cpp
+    MultiPointTests.cpp
+    EditorTests.cpp
+    PitchStutterTests.cpp
+    EngineTests.cpp
+    FreeTimeShaperTests.cpp
+    ShaperLevelProbe.cpp
+    EffectsChainTests.cpp
+    ExportTests.cpp
+    LiveTests.cpp)
 
 target_link_libraries(ses_tests PRIVATE
     ses_shared

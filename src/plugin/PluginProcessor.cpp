@@ -2,6 +2,10 @@
 
 #include "model/DemoScene.h"
 #include "model/Serialization.h"
+#include "ui/PluginEditor.h"
+
+#include <algorithm>
+#include <set>
 
 namespace ses
 {
@@ -10,6 +14,20 @@ namespace
 const juce::Identifier stateRootTag { "SpatialEchoStudioState" };
 const juce::Identifier stateVersionAttr { "stateVersion" };
 const juce::Identifier documentTag { "SceneDocument" };
+const juce::Identifier diagnosticsAttr { "diagnostics" };
+const juce::Identifier uiModeAttr { "uiMode" };
+const juce::Identifier uiScaleAttr { "uiScale" };
+
+// File name without touching juce::File (relative paths assert there).
+juce::String fileNameOf (const juce::String& path)
+{
+    return path.fromLastOccurrenceOf ("/", false, false).fromLastOccurrenceOf ("\\", false, false);
+}
+
+juce::String storageName (SourceRef::Storage s)
+{
+    return s == SourceRef::Storage::Embedded ? "embedded" : s == SourceRef::Storage::Reference ? "reference" : "none";
+}
 }
 
 SpatialEchoProcessor::SpatialEchoProcessor()
@@ -20,6 +38,130 @@ SpatialEchoProcessor::SpatialEchoProcessor()
       document (makeDefaultDocument())
 {
     outputDb = parameters.getRawParameterValue (params::output);
+    mixPercent = parameters.getRawParameterValue (params::mix);
+    triggerValue = parameters.getRawParameterValue (params::trigger);
+    bypassValue = parameters.getRawParameterValue (params::bypass);
+    protectValue = parameters.getRawParameterValue (params::protect);
+    diagnostics.log (juce::String ("plugin created (") + juce::PluginHostType().getHostDescription() + ")");
+    pitchRenderer.onRenderFinished = [this] { rebuildPlan(); };
+}
+
+class SpatialEchoProcessor::ExportJob final : public juce::Thread
+{
+public:
+    ExportJob (Scene sc, std::shared_ptr<const DecodedAudio> src, OfflineRenderSettings rs, ExportRequest rq)
+        : juce::Thread ("SES export"), scene (std::move (sc)), source (std::move (src)), settings (std::move (rs)), request (std::move (rq))
+    {
+        status.state = ExportStatus::State::Running;
+        status.file = request.file;
+        status.sampleRate = settings.sampleRate;
+        status.bpm = settings.bpm;
+    }
+    ~ExportJob() override { stopThread (10000); }
+
+    ExportStatus get() const { const juce::ScopedLock sl (lock); return status; }
+
+private:
+    void run() override
+    {
+        auto r = renderOffline (scene, source.get(), settings, [this] (double p)
+        {
+            const juce::ScopedLock sl (lock);
+            status.progress = p;
+            return ! threadShouldExit();
+        });
+        ExportStatus st = get();
+        st.points = r.pointsRendered;
+        if (r.cancelled || threadShouldExit())
+        {
+            st.state = ExportStatus::State::Cancelled;
+            st.message = juce::String::fromUTF8 ("Exportaci\xc3\xb3n cancelada");
+        }
+        else if (r.error.isNotEmpty())
+        {
+            st.state = ExportStatus::State::Failed;
+            st.message = r.error;
+        }
+        else
+        {
+            const auto w = writeWavFile (request.file, r.audio, settings.sampleRate, request.format);
+            st.seconds = r.audio.getNumSamples() / settings.sampleRate;
+            st.peakDb = juce::Decibels::gainToDecibels (r.peak, -100.0f);
+            st.truncated = r.truncated;
+            st.clipped = request.format != WavFormat::Float32 && r.peak > 1.0f;
+            st.state = w.wasOk() ? ExportStatus::State::Done : ExportStatus::State::Failed;
+            st.message = w.wasOk() ? juce::String() : w.getErrorMessage();
+            st.progress = 1.0;
+        }
+        const juce::ScopedLock sl (lock);
+        status = st;
+    }
+
+    Scene scene;
+    std::shared_ptr<const DecodedAudio> source;
+    OfflineRenderSettings settings;
+    ExportRequest request;
+    juce::CriticalSection lock;
+    ExportStatus status;
+};
+
+SpatialEchoProcessor::~SpatialEchoProcessor()
+{
+    exportJob.reset();  // stops a running export before anything it reads goes away
+}
+
+juce::File SpatialEchoProcessor::exportFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Spatial Echo Studio").getChildFile ("Exportaciones");
+}
+
+juce::File SpatialEchoProcessor::suggestExportFile (const juce::String& onlyPointId) const
+{
+    const auto scene = getSceneForUi();
+    auto name = juce::File::createLegalFileName (scene.name.isEmpty() ? juce::String ("Escena") : scene.name).replaceCharacter (' ', '_');
+    if (onlyPointId.isNotEmpty())
+        if (const auto* p = findPoint (scene, onlyPointId))
+            name << "_rep" << p->number;
+    name << "_" << juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
+    return exportFolder().getNonexistentChildFile (name, ".wav", false);
+}
+
+juce::Result SpatialEchoProcessor::startExport (const ExportRequest& rq)
+{
+    if (exportJob != nullptr && exportJob->isThreadRunning())
+        return juce::Result::fail (juce::String::fromUTF8 ("Ya hay una exportaci\xc3\xb3n en curso"));
+    if (rq.file == juce::File())
+        return juce::Result::fail ("Falta el archivo de destino");
+    OfflineRenderSettings rs;
+    rs.sampleRate = rq.sampleRate > 0.0 ? rq.sampleRate : hostSampleRate.load();
+    rs.bpm = getProjectBpm();
+    rs.onlyPointId = rq.onlyPointId;
+    rs.includeFragment = rq.includeFragment;
+    rs.mixPercent = mixPercent->load();
+    rs.outputDb = outputDb->load();
+    rs.protect = protectValue->load() > 0.5f;
+    exportJob.reset();
+    exportJob = std::make_unique<ExportJob> (getSceneForUi(), getSourceAudio(), rs, rq);
+    exportJob->startThread (juce::Thread::Priority::low);
+    diagnostics.log ("export started " + rq.file.getFileName() + " sr=" + juce::String (rs.sampleRate) + " bits=" + juce::String (bitsFor (rq.format))
+                     + " bpm=" + juce::String (rs.bpm, 2) + (rq.onlyPointId.isNotEmpty() ? " (one point)" : " (mix)"));
+    return juce::Result::ok();
+}
+
+void SpatialEchoProcessor::cancelExport()
+{
+    if (exportJob != nullptr)
+        exportJob->signalThreadShouldExit();
+}
+
+SpatialEchoProcessor::ExportStatus SpatialEchoProcessor::getExportStatus() const
+{
+    return exportJob != nullptr ? exportJob->get() : ExportStatus {};
+}
+
+juce::AudioProcessorParameter* SpatialEchoProcessor::getBypassParameter() const
+{
+    return parameters.getParameter (params::bypass);
 }
 
 bool SpatialEchoProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -30,52 +172,189 @@ bool SpatialEchoProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     return supported && in == out;
 }
 
-void SpatialEchoProcessor::prepareToPlay (double sampleRate, int)
+void SpatialEchoProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    outputGain.reset (sampleRate, 0.02);  // 20 ms ramp to avoid zipper noise
+    // Not concurrent with processBlock, so the engine and plan can be reset here.
+    hostSampleRate.store (sampleRate);
+    diagnostics.log ("prepareToPlay sr=" + juce::String (sampleRate) + " block=" + juce::String (samplesPerBlock));
+    engine.prepare (sampleRate);
+    liveChain.prepare (sampleRate, juce::jmax (samplesPerBlock * 2, 4096));
+    capture.prepare (sampleRate, juce::jmax (1, getTotalNumInputChannels()));
+    limiter.prepare (sampleRate);
+    lastTrigger = triggerValue->load() > 0.5f;
+
+    outputGain.reset (sampleRate, 0.02);  // 20 ms ramps avoid zipper noise
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (outputDb->load()));
+    wetLevel.reset (sampleRate, 0.02);
+    wetLevel.setCurrentAndTargetValue (mixPercent->load() / 100.0f);
+    bypassMix.reset (sampleRate, 0.01);
+    bypassMix.setCurrentAndTargetValue (bypassValue->load() > 0.5f ? 1.0f : 0.0f);
+    dryCopy.setSize (2, juce::jmax (1, samplesPerBlock) * 2);
+
+    rebuildPlan();
 }
 
 void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+    const int n = buffer.getNumSamples();
+    const int channels = juce::jmin (buffer.getNumChannels(), getTotalNumOutputChannels());
 
     for (auto ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
-        buffer.clear (ch, 0, buffer.getNumSamples());
+        buffer.clear (ch, 0, n);
+
+    // Host input: keep the dry signal for later capture (always on; one block copy).
+    capture.push (buffer, n);
+
+    TransportInfo transport;
+    if (auto* head = getPlayHead())
+    {
+        if (auto pos = head->getPosition())
+        {
+            if (auto bpm = pos->getBpm())
+                transport.bpm = *bpm;
+            if (auto ppq = pos->getPpqPosition())
+                transport.ppq = *ppq;
+            transport.isPlaying = pos->getIsPlaying();
+            if (auto samples = pos->getTimeInSamples())
+                transport.timeSamples = *samples;
+        }
+    }
+
+    // Bypass crossfade needs the untouched input; blocks larger than announced are
+    // still processed, they just switch without the crossfade.
+    bypassMix.setTargetValue (bypassValue->load() > 0.5f ? 1.0f : 0.0f);
+    const bool canCrossfade = n <= dryCopy.getNumSamples() && channels <= dryCopy.getNumChannels();
+    const bool needDry = bypassMix.isSmoothing() || bypassMix.getTargetValue() > 0.0f;
+    if (needDry && canCrossfade)
+        for (int ch = 0; ch < channels; ++ch)
+            dryCopy.copyFrom (ch, 0, buffer, ch, 0, n);
+
+    const bool trig = triggerValue->load() > 0.5f;
+    const bool rising = (trig && ! lastTrigger) | triggerRequested.exchange (false);
+    lastTrigger = trig;
+    const bool preview = previewRequested.exchange (false);
+    const bool fragment = fragmentRequested.exchange (false);
+
+    const auto* plan = plans.acquire();
+
+    // «Procesar Mixer en vivo»: the input itself, before the repetitions are added
+    // (the capture above keeps the raw input, so processed audio never feeds back into a capture).
+    liveChain.process (buffer, n, plan != nullptr ? &plan->live : nullptr, transport,
+                       transport.bpm.value_or (engine.lastBpmUsed()));
+    liveProcessing.store (liveChain.isProcessing(), std::memory_order_relaxed);
+
+    wetLevel.setTargetValue (mixPercent->load() / 100.0f);
+    const float wetStart = wetLevel.getCurrentValue();
+    wetLevel.skip (n);
+    const float wetEnd = wetLevel.getCurrentValue();
+
+    EngineRequests req;
+    req.triggerRisingEdge = rising;
+    req.previewScene = preview;
+    req.previewFragment = fragment;
+    req.triggerPoint = pointTrigger.exchange (0);
+
+    engine.process (buffer, plan, transport, req, wetStart, wetEnd);
+    plans.release();
+    currentBeat.store (engine.currentBeat());
+    currentSeconds.store (engine.currentSeconds());
 
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (outputDb->load()));
-
     if (! outputGain.isSmoothing())
     {
         buffer.applyGain (outputGain.getTargetValue());
-        return;
+    }
+    else
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const auto g = outputGain.getNextValue();
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                buffer.getWritePointer (ch)[i] *= g;
+        }
     }
 
-    const auto numChannels = buffer.getNumChannels();
-    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    if (protectValue->load() > 0.5f && (engine.numActiveVoices() > 0 || liveChain.isProcessing() || limiter.isReducing()))
+        limiter.process (buffer);
+    else
+        limiter.idle();
+    hostSnapshot.limiterGainDb.store (juce::Decibels::gainToDecibels (limiter.lastMinGain(), -60.0f));
+
+    if (needDry && canCrossfade)
     {
-        const auto g = outputGain.getNextValue();
-        for (int ch = 0; ch < numChannels; ++ch)
-            buffer.getWritePointer (ch)[i] *= g;
+        if (! bypassMix.isSmoothing())
+        {
+            for (int ch = 0; ch < channels; ++ch)
+                buffer.copyFrom (ch, 0, dryCopy, ch, 0, n);  // fully bypassed: exact input
+        }
+        else
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                const float b = bypassMix.getNextValue();
+                for (int ch = 0; ch < channels; ++ch)
+                {
+                    auto* d = buffer.getWritePointer (ch);
+                    d[i] = d[i] * (1.0f - b) + dryCopy.getSample (ch, i) * b;
+                }
+            }
+        }
     }
+    else if (needDry)
+    {
+        bypassMix.skip (n);
+    }
+
+    {
+        // Output meter: what the host actually receives (after the bypass crossfade).
+        float peak = 0.0f;
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, n));
+        if (peak > outputPeak.load (std::memory_order_relaxed))
+            outputPeak.store (peak, std::memory_order_relaxed);
+    }
+    hostSnapshot.store (transport, n, engine.stats(), engine);
 }
 
 juce::AudioProcessorEditor* SpatialEchoProcessor::createEditor()
 {
-    // Placeholder until the Easy Mode editor exists.
-    return new juce::GenericAudioProcessorEditor (*this);
+    return new SpatialEchoEditor (*this);
+}
+
+// ---- document ---------------------------------------------------------------
+
+void SpatialEchoProcessor::takeEmbeddedBytes()
+{
+    embeddedBytes.reset();
+    if (auto* scene = document.activeScene())
+        if (scene->source.storage == SourceRef::Storage::Embedded)
+            std::swap (embeddedBytes, scene->source.embeddedData);
 }
 
 Document SpatialEchoProcessor::getDocument() const
 {
     const juce::ScopedLock sl (documentLock);
-    return document;
+    Document copy = document;
+    if (auto* scene = copy.activeScene())
+        if (scene->source.storage == SourceRef::Storage::Embedded)
+            scene->source.embeddedData = embeddedBytes;
+    return copy;
 }
 
 void SpatialEchoProcessor::setDocument (Document doc)
 {
-    const juce::ScopedLock sl (documentLock);
-    document = std::move (doc);
+    {
+        const juce::ScopedLock sl (documentLock);
+        document = std::move (doc);
+        if (document.activeScene() == nullptr)
+            document = makeDefaultDocument();
+        takeEmbeddedBytes();
+        lastLoadWarnings.clear();
+    }
+    restoreSourceFromDocument();
+    ++documentVersion;
+    rebuildPlan();
 }
 
 juce::StringArray SpatialEchoProcessor::getLastLoadWarnings() const
@@ -84,46 +363,309 @@ juce::StringArray SpatialEchoProcessor::getLastLoadWarnings() const
     return lastLoadWarnings;
 }
 
+Scene SpatialEchoProcessor::getSceneForUi() const
+{
+    const juce::ScopedLock sl (documentLock);
+    if (auto* scene = document.activeScene())
+        return *scene;  // embedded bytes live outside the document
+    return {};
+}
+
+void SpatialEchoProcessor::editScene (const std::function<void (Scene&)>& fn)
+{
+    {
+        const juce::ScopedLock sl (documentLock);
+        if (auto* scene = document.activeScene())
+            fn (*scene);
+    }
+    ++documentVersion;
+    rebuildPlan();
+}
+
+void SpatialEchoProcessor::rebuildPlan()
+{
+    Scene scene;
+    std::shared_ptr<const DecodedAudio> src;
+    {
+        const juce::ScopedLock sl (documentLock);
+        if (auto* s = document.activeScene())
+            scene = *s;
+        src = source;
+    }
+    const double rate = hostSampleRate.load();
+
+    const juce::ScopedLock pl (planLock);
+    const bool needRender = src.get() != renderedFrom || scene.source.trimStart != renderedTrimStart
+                            || scene.source.trimEnd != renderedTrimEnd || ! juce::exactlyEqual (rate, renderedRate);
+    const auto now = juce::Time::getMillisecondCounter();
+    if (needRender)
+    {
+        renderedSample = renderSample (scene.source, src.get(), rate);
+        renderedFrom = src.get();
+        renderedTrimStart = scene.source.trimStart;
+        renderedTrimEnd = scene.source.trimEnd;
+        renderedRate = rate;
+        pitchRenderer.setBase (renderedSample, rate);
+    }
+
+    std::set<int> keys;
+    for (auto& p : scene.points)
+        keys.insert (renderKeyFor (p.sound));
+    pitchRenderer.request (keys);
+
+    auto plan = buildPlan (scene, renderedSample, pitchRenderer.ready(), rate, lastPlanForSlots.get());
+    plan->live = makeLivePlan (scene.live, rate);
+    lastPlanForSlots = std::make_shared<PlaybackPlan>();
+    lastPlanForSlots->fx = plan->fx;
+
+    // Buffers that were in use last time but not now stay readable for 2 s so
+    // voices on them fade out instead of stopping dead.
+    for (auto& old : lastOwned)
+        if (! plan->owns (old.get()) && std::none_of (retiring.begin(), retiring.end(), [&] (auto& r) { return r.first == old; }))
+            retiring.push_back ({ old, now });
+    std::erase_if (retiring, [&] (auto& r) { return now - r.second > 2000 || plan->owns (r.first.get()); });
+    for (auto& r : retiring)
+        plan->owned.push_back (r.first);
+    lastOwned = plan->owned;
+    if (plan->sample != nullptr && std::find (lastOwned.begin(), lastOwned.end(), plan->sample) == lastOwned.end())
+        lastOwned.push_back (plan->sample);
+
+    plans.publish (std::move (plan));
+}
+
+juce::Result SpatialEchoProcessor::saveSceneFile (const juce::File& file) const
+{
+    if (! file.replaceWithText (toJson (getDocument())))
+        return juce::Result::fail ("could not write " + file.getFullPathName());
+    return juce::Result::ok();
+}
+
+juce::Result SpatialEchoProcessor::loadSceneFile (const juce::File& file)
+{
+    auto loaded = documentFromJson (file.loadFileAsString());
+    if (! loaded)
+        return juce::Result::fail (loaded.error);
+    const auto warnings = loaded.warnings;
+    setDocument (std::move (*loaded.value));
+    {
+        const juce::ScopedLock sl (documentLock);
+        lastLoadWarnings.addArray (warnings);
+    }
+    diagnostics.log ("scene file loaded " + file.getFileName());
+    return juce::Result::ok();
+}
+
+// ---- source audio ---------------------------------------------------------------
+
+juce::Result SpatialEchoProcessor::loadSourceFile (const juce::File& file)
+{
+    juce::MemoryBlock bytes;
+    if (! file.loadFileAsData (bytes))
+        return juce::Result::fail ("could not read " + file.getFullPathName());
+    return loadSourceBytes (bytes, file.getFullPathName());
+}
+
+juce::Result SpatialEchoProcessor::loadSourceBytes (const juce::MemoryBlock& bytes, const juce::String& originalPath)
+{
+    auto decoded = decodeWav (bytes);
+    if (decoded.audio == nullptr)
+    {
+        const juce::ScopedLock sl (documentLock);
+        sourceMessage = decoded.error;
+        return juce::Result::fail (decoded.error);
+    }
+
+    const bool embed = (juce::int64) bytes.getSize() <= kMaxEmbeddedBytes;
+    {
+        const juce::ScopedLock sl (documentLock);
+        if (auto* scene = document.activeScene())
+        {
+            SourceRef ref;
+            ref.storage = embed ? SourceRef::Storage::Embedded : SourceRef::Storage::Reference;
+            ref.filePath = originalPath;
+            ref.contentHash = "sha256:" + sha256Hex (bytes);
+            ref.encoding = "wav";
+            ref.sampleRate = decoded.audio->sampleRate;
+            ref.numChannels = decoded.audio->buffer.getNumChannels();
+            ref.numSamples = decoded.audio->buffer.getNumSamples();
+            scene->source = std::move (ref);  // trim reset: the whole file is the fragment
+        }
+        embeddedBytes = embed ? bytes : juce::MemoryBlock();
+        source = decoded.audio;
+        sourceMessage = {};
+    }
+    ++documentVersion;
+    rebuildPlan();
+    diagnostics.log ("WAV loaded " + fileNameOf (originalPath) + " bytes=" + juce::String ((juce::int64) bytes.getSize())
+                     + (embed ? " (embedded)" : " (reference only: larger than 16 MB)"));
+    return juce::Result::ok();
+}
+
+juce::Result SpatialEchoProcessor::captureHostLast (double seconds)
+{
+    return useCapturedAudio (capture.takeLast (seconds));
+}
+
+juce::Result SpatialEchoProcessor::stopHostRecording()
+{
+    return useCapturedAudio (capture.stopRecording());
+}
+
+juce::Result SpatialEchoProcessor::useCapturedAudio (const std::optional<DecodedAudio>& audio)
+{
+    if (! audio || audio->buffer.getNumSamples() == 0)
+        return juce::Result::fail (juce::String::fromUTF8 ("No hay audio de entrada capturado todav\xc3\xad" "a"));
+    // Silence check: a capture of nothing is almost always a routing mistake.
+    float mag = 0.0f;
+    for (int ch = 0; ch < audio->buffer.getNumChannels(); ++ch)
+        mag = juce::jmax (mag, audio->buffer.getMagnitude (ch, 0, audio->buffer.getNumSamples()));
+    if (mag < 1.0e-5f)
+        return juce::Result::fail (juce::String::fromUTF8 ("La entrada capturada est\xc3\xa1 en silencio: comprueba que el audio llega a esta pista del Mixer"));
+    const auto bytes = encodeWav (audio->buffer, audio->sampleRate);
+    if (bytes.getSize() == 0)
+        return juce::Result::fail ("No se pudo codificar la captura");
+    diagnostics.log ("host capture " + juce::String (audio->buffer.getNumSamples() / audio->sampleRate, 2) + " s");
+    return loadSourceBytes (bytes, kHostCaptureName);
+}
+
+void SpatialEchoProcessor::restoreSourceFromDocument()
+{
+    const juce::ScopedLock sl (documentLock);
+    const auto* scene = document.activeScene();
+    if (scene == nullptr || scene->source.storage == SourceRef::Storage::None)
+    {
+        source = nullptr;
+        sourceMessage = {};
+        return;
+    }
+
+    const auto& ref = scene->source;
+    juce::MemoryBlock bytes;
+    juce::String message;
+    if (ref.storage == SourceRef::Storage::Embedded)
+        bytes = embeddedBytes;
+    else if (! juce::File::isAbsolutePath (ref.filePath) || ! juce::File (ref.filePath).loadFileAsData (bytes))
+        message = "source file not found: " + ref.filePath;
+
+    std::shared_ptr<const DecodedAudio> restored;
+    if (bytes.getSize() > 0)
+    {
+        if (ref.contentHash.isNotEmpty() && ref.contentHash != "sha256:" + sha256Hex (bytes))
+            message = "source file changed since it was loaded";
+        auto decoded = decodeWav (bytes);
+        restored = decoded.audio;
+        if (restored == nullptr)
+            message = decoded.error;
+    }
+    else if (message.isEmpty())
+    {
+        message = "embedded audio missing from the saved state";
+    }
+    source = restored;
+    sourceMessage = message;
+    if (message.isNotEmpty())
+        lastLoadWarnings.add (message);
+}
+
+SpatialEchoProcessor::SourceStatus SpatialEchoProcessor::getSourceStatus() const
+{
+    const juce::ScopedLock sl (documentLock);
+    SourceStatus st;
+    st.message = sourceMessage;
+    if (source == nullptr)
+        return st;
+    st.loaded = true;
+    st.sampleRate = source->sampleRate;
+    st.numChannels = source->buffer.getNumChannels();
+    st.seconds = source->buffer.getNumSamples() / source->sampleRate;
+    if (const auto* scene = document.activeScene())
+    {
+        st.fileName = fileNameOf (scene->source.filePath);
+        st.embedded = scene->source.storage == SourceRef::Storage::Embedded;
+    }
+    return st;
+}
+
+std::shared_ptr<const DecodedAudio> SpatialEchoProcessor::getSourceAudio() const
+{
+    const juce::ScopedLock sl (documentLock);
+    return source;
+}
+
+// ---- host state -------------------------------------------------------------------
+
 void SpatialEchoProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::XmlElement root (stateRootTag);
     root.setAttribute (stateVersionAttr, kStateVersion);
+    root.setAttribute (diagnosticsAttr, diagnostics.isEnabled());
+    root.setAttribute (uiModeAttr, getUiMode() == UiMode::Pro ? "pro" : "easy");
+    root.setAttribute (uiScaleAttr, getUiScalePercent());
 
     if (auto paramsXml = parameters.copyState().createXml())
         root.addChildElement (paramsXml.release());
 
+    const auto doc = getDocument();
     auto* docXml = root.createNewChildElement (documentTag);
-    docXml->addTextElement (toJson (getDocument()));
+    docXml->addTextElement (toJson (doc));
 
     copyXmlToBinary (root, destData);
+
+    const auto* scene = doc.activeScene();
+    diagnostics.log ("getState " + juce::String ((juce::int64) destData.getSize()) + " bytes, source="
+                     + (scene ? storageName (scene->source.storage) : "none")
+                     + (scene ? " embeddedBytes=" + juce::String ((juce::int64) scene->source.embeddedData.getSize()) : ""));
 }
 
 void SpatialEchoProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
+    diagnostics.log ("setState " + juce::String (sizeInBytes) + " bytes, thread="
+                     + (juce::MessageManager::existsAndIsCurrentThread() ? "message" : "OTHER"));
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (stateRootTag))
+    {
+        diagnostics.log ("setState IGNORED: not our state format");
         return;  // unknown data: keep current state
+    }
 
     if (xml->getIntAttribute (stateVersionAttr, 0) > kStateVersion)
+    {
+        diagnostics.log ("setState IGNORED: newer state version");
         return;  // written by a newer plugin version: do not guess
+    }
+    diagnostics.setEnabled (xml->getBoolAttribute (diagnosticsAttr, true));
+    setUiMode (xml->getStringAttribute (uiModeAttr) == "pro" ? UiMode::Pro : UiMode::Easy);
+    setUiScalePercent (xml->getIntAttribute (uiScaleAttr, 100));
 
     if (auto* paramsXml = xml->getChildByName (parameters.state.getType()))
         parameters.replaceState (juce::ValueTree::fromXml (*paramsXml));
 
-    if (auto* docXml = xml->getChildByName (documentTag))
+    auto* docXml = xml->getChildByName (documentTag);
+    if (docXml == nullptr)
     {
-        auto loaded = documentFromJson (docXml->getAllSubText());
-        const juce::ScopedLock sl (documentLock);
-        if (loaded)
-        {
-            document = std::move (*loaded.value);
-            lastLoadWarnings = loaded.warnings;
-        }
-        else
-        {
-            lastLoadWarnings = juce::StringArray { "scene document not restored: " + loaded.error };
-        }
+        diagnostics.log ("setState: no scene document in state");
+        return;
     }
+
+    auto loaded = documentFromJson (docXml->getAllSubText());
+    if (loaded)
+    {
+        const auto warnings = loaded.warnings;
+        setDocument (std::move (*loaded.value));
+        const juce::ScopedLock sl (documentLock);
+        lastLoadWarnings.addArray (warnings);
+    }
+    else
+    {
+        const juce::ScopedLock sl (documentLock);
+        lastLoadWarnings = juce::StringArray { "scene document not restored: " + loaded.error };
+    }
+
+    const auto st = getSourceStatus();
+    diagnostics.log ("setState restored: source " + (st.loaded ? "OK " + st.fileName + " " + juce::String (st.seconds, 2) + " s"
+                                                                 : juce::String ("NOT loaded"))
+                     + (st.message.isNotEmpty() ? " | " + st.message : juce::String())
+                     + " | warnings: " + getLastLoadWarnings().joinIntoString ("; "));
 }
 
 } // namespace ses

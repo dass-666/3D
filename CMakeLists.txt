@@ -40,13 +40,36 @@ target_sources(ses_shared INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/VoicePresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/Serialization.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/model/DemoScene.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/SourceAudio.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/PitchRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/HostCapture.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/EchoEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/PointFx.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/OfflineRender.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/audio/LiveChain.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PluginEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Theme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/HeaderBar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/WaveformView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialMap.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PointPanel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TimelineView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/CurveEditor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ProSidebar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/PresetActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ActionBar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ExportPanel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/model/UserPresets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/PluginProcessor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Parameters.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/Diagnostics.cpp)
 target_include_directories(ses_shared INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(ses_shared SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch)
 target_compile_definitions(ses_shared INTERFACE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(ses_shared INTERFACE
     juce::juce_audio_utils
+    juce::juce_cryptography
     juce::juce_recommended_config_flags)
 
 target_link_libraries(SpatialEchoStudio PRIVATE

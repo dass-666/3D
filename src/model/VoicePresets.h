@@ -17,7 +17,7 @@ struct VoicePreset
     SoundSettings sound;
     bool builtIn = false;
     // True when the preset's intended sound needs processing that is not
-    // implemented yet (e.g. formants, modulation). The UI must say so.
+    // implemented yet. All built-ins are now fully processed.
     bool needsFutureProcessing = false;
 
     bool operator== (const VoicePreset&) const = default;
@@ -28,6 +28,8 @@ namespace presetIds
     inline const juce::String original { "builtin.original" };
     inline const juce::String agudo    { "builtin.agudo" };
     inline const juce::String grave    { "builtin.grave" };
+    inline const juce::String profundo { "builtin.profundo" };
+    inline const juce::String brillante { "builtin.brillante" };
     inline const juce::String monster  { "builtin.monster" };
     inline const juce::String robot    { "builtin.robot" };
     inline const juce::String fantasma { "builtin.fantasma" };

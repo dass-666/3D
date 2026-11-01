@@ -1,6 +1,8 @@
 #include "model/Serialization.h"
+#include "model/UserPresets.h"
 
 #include <algorithm>
+#include <cmath>
 #include <set>
 
 namespace ses
@@ -43,6 +45,7 @@ var soundToVar (const SoundSettings& s)
     set (o, "pitchSemitones", s.pitchSemitones);
     set (o, "character", s.character);
     set (o, "speedPercent", s.speedPercent);
+    set (o, "formantSemitones", s.formantSemitones);
     return o;
 }
 
@@ -52,6 +55,7 @@ var pointToVar (const Point& p)
     set (o, "id", p.id);
     set (o, "number", p.number);
     set (o, "enabled", p.enabled);
+    set (o, "solo", p.solo);
 
     auto pos = obj();
     set (pos, "x", p.position.x);
@@ -60,16 +64,135 @@ var pointToVar (const Point& p)
 
     auto timing = obj();
     set (timing, "beat", p.timing.beat);
+    set (timing, "seconds", p.timing.seconds);
     set (o, "timing", timing);
+
+    auto region = obj();
+    set (region, "start", p.region.start);
+    set (region, "end", p.region.end);
+    set (o, "region", region);
 
     auto voice = obj();
     set (voice, "presetId", p.voice.presetId);
     set (voice, "presetName", p.voice.presetName);
     set (voice, "modified", p.voice.modified);
     set (o, "voice", voice);
+    if (p.creativePreset.isNotEmpty())
+        set (o, "creativePreset", p.creativePreset);
 
     set (o, "sound", soundToVar (p.sound));
-    set (o, "volumePercent", p.volumePercent);
+    set (o, "gainDb", p.gainDb);
+
+    auto st = obj();
+    set (st, "enabled", p.stutter.enabled);
+    set (st, "region", toString (p.stutter.region));
+    set (st, "manualStart", p.stutter.manualStart);
+    set (st, "manualEnd", p.stutter.manualEnd);
+    set (st, "repeats", p.stutter.repeats);
+    set (st, "division", toString (p.stutter.division));
+    set (st, "sliceLengthPercent", p.stutter.sliceLengthPercent);
+    set (st, "offsetBeats", p.stutter.offsetBeats);
+    set (st, "gainDb", p.stutter.gainDb);
+    set (st, "accelPercent", p.stutter.accelPercent);
+    set (o, "stutter", st);
+
+    auto sh = obj();
+    set (sh, "enabled", p.shaper.enabled);
+    set (sh, "shape", toString (p.shaper.shape));
+    set (sh, "rateMode", toString (p.shaper.rateMode));
+    set (sh, "cuts", p.shaper.cuts);
+    set (sh, "periodMs", p.shaper.periodMs);
+    set (sh, "division", toString (p.shaper.division));
+    set (sh, "depthPercent", p.shaper.depthPercent);
+    set (sh, "openPercent", p.shaper.openPercent);
+    set (sh, "attackMs", p.shaper.attackMs);
+    set (sh, "releaseMs", p.shaper.releaseMs);
+    set (sh, "distribution", toString (p.shaper.distribution));
+    set (sh, "accelPercent", p.shaper.accelPercent);
+    set (sh, "pattern", p.shaper.pattern);
+    set (sh, "wholeVoice", p.shaper.wholeVoice);
+    set (sh, "regionStart", p.shaper.regionStart);
+    set (sh, "regionEnd", p.shaper.regionEnd);
+    set (sh, "lengthMs", p.shaper.lengthMs);
+    set (sh, "makeupDb", p.shaper.makeupDb);
+    set (sh, "autoLevel", p.shaper.autoLevel);
+    set (sh, "custom", p.shaper.custom);
+    if (! p.shaper.curve.empty())
+    {
+        juce::Array<var> curve;
+        for (auto& pt : p.shaper.curve)
+        {
+            juce::Array<var> xy { pt.t, pt.gain };
+            curve.add (var (xy));
+        }
+        set (sh, "curve", var (curve));
+    }
+    if (p.shaper.manualKind == ShaperSettings::ManualKind::Cuts)
+        set (sh, "manualKind", "cuts");
+    if (! p.shaper.blocks.empty())
+    {
+        juce::Array<var> blocks;
+        for (auto& b : p.shaper.blocks)
+        {
+            juce::Array<var> sel { b.startMs, b.endMs, b.level };
+            blocks.add (var (sel));
+        }
+        set (sh, "blocks", var (blocks));
+    }
+    set (o, "shaper", sh);
+
+    auto fx = obj();
+    set (fx, "fadeInMs", p.effects.fadeInMs);
+    set (fx, "fadeOutMs", p.effects.fadeOutMs);
+    set (fx, "reverse", p.effects.reverse);
+    set (fx, "lowpassHz", p.effects.lowpassHz);
+    set (fx, "highpassHz", p.effects.highpassHz);
+    {
+        const auto& c = p.effects.character;
+        auto x = obj();
+        set (x, "enabled", c.enabled);
+        set (x, "type", toString (c.type));
+        set (x, "amountPercent", c.amountPercent);
+        set (x, "mixPercent", c.mixPercent);
+        set (fx, "character", x);
+    }
+    {
+        const auto& m = p.effects.modulation;
+        auto x = obj();
+        set (x, "enabled", m.enabled);
+        set (x, "type", toString (m.type));
+        set (x, "rateHz", m.rateHz);
+        set (x, "depthPercent", m.depthPercent);
+        set (x, "mixPercent", m.mixPercent);
+        set (fx, "modulation", x);
+    }
+    {
+        const auto& d = p.effects.delay;
+        auto x = obj();
+        set (x, "enabled", d.enabled);
+        set (x, "sync", d.sync);
+        set (x, "timeMs", d.timeMs);
+        set (x, "division", toString (d.division));
+        set (x, "feedbackPercent", d.feedbackPercent);
+        set (x, "pingPong", d.pingPong);
+        set (x, "lowpassHz", d.lowpassHz);
+        set (x, "mixPercent", d.mixPercent);
+        set (fx, "delay", x);
+    }
+    {
+        const auto& r = p.effects.reverb;
+        auto x = obj();
+        set (x, "enabled", r.enabled);
+        set (x, "type", toString (r.type));
+        set (x, "sizePercent", r.sizePercent);
+        set (x, "decayPercent", r.decayPercent);
+        set (x, "predelayMs", r.predelayMs);
+        set (x, "mixPercent", r.mixPercent);
+        set (x, "outputDb", r.outputDb);
+        set (fx, "reverb", x);
+    }
+    set (fx, "chainOrder", p.effects.chainOrder);
+    set (o, "effects", fx);
     return o;
 }
 
@@ -96,6 +219,7 @@ var sceneToVar (const Scene& s)
     set (o, "id", s.id);
     set (o, "name", s.name);
     set (o, "rhythm", toString (s.rhythm));
+    set (o, "timeMode", toString (s.timeMode));
     set (o, "mixPercent", s.mixPercent);
     set (o, "spatialMode", toString (s.spatialMode));
     set (o, "maxPoints", s.maxPoints);
@@ -105,6 +229,13 @@ var sceneToVar (const Scene& s)
     for (auto& p : s.points)
         points.add (pointToVar (p));
     set (o, "points", points);
+
+    auto live = obj();
+    set (live, "enabled", s.live.enabled);
+    set (live, "wetPercent", s.live.wetPercent);
+    set (live, "cycleBeats", s.live.cycleBeats);
+    set (live, "point", pointToVar (s.live.fx));
+    set (o, "live", live);
     return o;
 }
 
@@ -175,6 +306,7 @@ struct Reader
         s.pitchSemitones = number (o, "pitchSemitones", 0.0, limits::minPitch, limits::maxPitch, where);
         s.character = number (o, "character", 0.0, limits::minCharacter, limits::maxCharacter, where);
         s.speedPercent = number (o, "speedPercent", 100.0, limits::minSpeed, limits::maxSpeed, where);
+        s.formantSemitones = number (o, "formantSemitones", 0.0, limits::minFormant, limits::maxFormant, where);
         return s;
     }
 
@@ -184,6 +316,7 @@ struct Reader
         p.id = text (o, "id");
         p.number = (int) integer (o, "number", 0, 0, 9999, where);
         p.enabled = flag (o, "enabled", true);
+        p.solo = flag (o, "solo", false);  // added after v1 shipped internally; optional
 
         const auto pos = o.getProperty ("position", var());
         p.position.x = number (pos, "x", 50.0, limits::minCoord, limits::maxCoord, where + ".position");
@@ -191,14 +324,198 @@ struct Reader
 
         const auto timing = o.getProperty ("timing", var());
         p.timing.beat = number (timing, "beat", 0.0, limits::minBeat, limits::maxBeat, where + ".timing");
+        p.timing.seconds = number (timing, "seconds", p.timing.beat * 0.5, limits::minSeconds, limits::maxSeconds, where + ".timing");
+
+        const auto region = o.getProperty ("region", var());
+        if (region.isObject())
+        {
+            p.region.start = number (region, "start", 0.0, 0.0, 1.0, where + ".region");
+            p.region.end = number (region, "end", 1.0, 0.0, 1.0, where + ".region");
+            p.region = clamped (p.region);
+        }
 
         const auto voice = o.getProperty ("voice", var());
         p.voice.presetId = text (voice, "presetId", presetIds::original);
         p.voice.presetName = text (voice, "presetName", "Original");
         p.voice.modified = flag (voice, "modified", false);
+        p.creativePreset = text (o, "creativePreset", {});
 
         p.sound = sound (o.getProperty ("sound", var()), where + ".sound");
-        p.volumePercent = number (o, "volumePercent", 100.0, limits::minVolume, limits::maxVolume, where);
+        if (o.hasProperty ("gainDb"))
+            p.gainDb = number (o, "gainDb", 0.0, limits::minGainDb, limits::maxGainDb, where);
+        else
+        {
+            // Scenes written before B4 stored a 0..100 % volume.
+            const double pct = number (o, "volumePercent", 100.0, 0.0, 100.0, where);
+            p.gainDb = pct <= 0.0 ? limits::minGainDb
+                                  : std::clamp (20.0 * std::log10 (pct / 100.0), limits::minGainDb, limits::maxGainDb);
+        }
+
+        const auto st = o.getProperty ("stutter", var());
+        if (st.isObject())
+        {
+            StutterSettings x;
+            x.enabled = flag (st, "enabled", false);
+            if (auto r = stutterRegionFromString (text (st, "region", "start")))
+                x.region = *r;
+            else
+                warnings.add (where + ".stutter.region: unknown, using start");
+            x.manualStart = number (st, "manualStart", 0.0, 0.0, 1.0, where + ".stutter");
+            x.manualEnd = number (st, "manualEnd", 1.0, 0.0, 1.0, where + ".stutter");
+            x.repeats = (int) integer (st, "repeats", 8, limits::minStutterRepeats, limits::maxStutterRepeats, where + ".stutter");
+            if (auto d = stutterDivisionFromString (text (st, "division", "1/16")))
+                x.division = *d;
+            else
+                warnings.add (where + ".stutter.division: unknown, using 1/16");
+            x.sliceLengthPercent = number (st, "sliceLengthPercent", 100.0, 10.0, 100.0, where + ".stutter");
+            x.offsetBeats = number (st, "offsetBeats", 0.0, 0.0, limits::maxBeat, where + ".stutter");
+            x.accelPercent = number (st, "accelPercent", 0.0, -100.0, 100.0, where + ".stutter");
+            x.gainDb = number (st, "gainDb", 0.0, limits::minGainDb, limits::maxGainDb, where + ".stutter");
+            p.stutter = clamped (x);
+        }
+
+        const auto sh = o.getProperty ("shaper", var());
+        if (sh.isObject())
+        {
+            ShaperSettings x;
+            x.enabled = flag (sh, "enabled", false);
+            if (auto v = shaperShapeFromString (text (sh, "shape", "square")))
+                x.shape = *v;
+            else
+                warnings.add (where + ".shaper.shape: unknown, using square");
+            if (auto v = shaperRateModeFromString (text (sh, "rateMode", "count")))
+                x.rateMode = *v;
+            else
+                warnings.add (where + ".shaper.rateMode: unknown, using count");
+            x.cuts = (int) integer (sh, "cuts", 8, limits::minShaperCuts, limits::maxShaperCuts, where + ".shaper");
+            x.periodMs = number (sh, "periodMs", 125.0, limits::minShaperPeriodMs, limits::maxShaperPeriodMs, where + ".shaper");
+            if (auto d = stutterDivisionFromString (text (sh, "division", "1/16")))
+                x.division = *d;
+            else
+                warnings.add (where + ".shaper.division: unknown, using 1/16");
+            x.depthPercent = number (sh, "depthPercent", 100.0, 0.0, 100.0, where + ".shaper");
+            x.openPercent = number (sh, "openPercent", 50.0, 5.0, 95.0, where + ".shaper");
+            if (sh.hasProperty ("attackMs") || sh.hasProperty ("releaseMs"))
+            {
+                x.attackMs = number (sh, "attackMs", 1.0, limits::minShaperRampMs, limits::maxShaperAttackMs, where + ".shaper");
+                x.releaseMs = number (sh, "releaseMs", 3.0, limits::minShaperRampMs, limits::maxShaperReleaseMs, where + ".shaper");
+            }
+            else
+            {
+                // Earlier scenes had one smoothing time: use it for both ramps.
+                const double fade = number (sh, "fadeMs", 3.0, 0.0, 50.0, where + ".shaper");
+                x.attackMs = x.releaseMs = std::max (limits::minShaperRampMs, fade);
+            }
+            if (auto d = shaperDistributionFromString (text (sh, "distribution", "uniform")))
+                x.distribution = *d;
+            else
+                warnings.add (where + ".shaper.distribution: unknown, using uniform");
+            x.accelPercent = number (sh, "accelPercent", 0.0, 0.0, 100.0, where + ".shaper");
+            if (! sh.hasProperty ("distribution") && x.accelPercent > 0.0)
+                x.distribution = ShaperSettings::Distribution::Accelerating;  // earlier meaning of accelPercent
+            x.pattern = text (sh, "pattern");
+            x.wholeVoice = flag (sh, "wholeVoice", true);
+            x.regionStart = number (sh, "regionStart", 0.0, 0.0, 1.0, where + ".shaper");
+            x.regionEnd = number (sh, "regionEnd", 1.0, 0.0, 1.0, where + ".shaper");
+            x.lengthMs = number (sh, "lengthMs", 0.0, 0.0, 60000.0, where + ".shaper");
+            x.makeupDb = number (sh, "makeupDb", 0.0, -limits::maxShaperMakeupDb, limits::maxShaperMakeupDb, where + ".shaper");
+            x.autoLevel = flag (sh, "autoLevel", false);
+            x.custom = flag (sh, "custom", false);
+            // Optional (B10): older scenes have no cut blocks and use points.
+            x.manualKind = text (sh, "manualKind", "points") == "cuts" ? ShaperSettings::ManualKind::Cuts : ShaperSettings::ManualKind::Points;
+            if (const auto* blocks = sh.getProperty ("blocks", var()).getArray())
+                for (const auto& b : *blocks)
+                {
+                    const auto* v = b.getArray();
+                    auto num = [] (const var& n) { return n.isDouble() || n.isInt() || n.isInt64(); };
+                    if (v == nullptr || v->size() != 3 || ! num ((*v)[0]) || ! num ((*v)[1]) || ! num ((*v)[2]))
+                    {
+                        warnings.add (where + ".shaper.blocks: bad cut ignored");
+                        continue;
+                    }
+                    x.blocks.push_back ({ (double) (*v)[0], (double) (*v)[1], (double) (*v)[2] });
+                }
+            if (const auto* curve = sh.getProperty ("curve", var()).getArray())
+            {
+                for (const auto& pt : *curve)
+                {
+                    const auto* xy = pt.getArray();
+                    if (xy == nullptr || xy->size() != 2 || ! (*xy)[0].isDouble() && ! (*xy)[0].isInt() || ! (*xy)[1].isDouble() && ! (*xy)[1].isInt())
+                    {
+                        warnings.add (where + ".shaper.curve: bad point ignored");
+                        continue;
+                    }
+                    x.curve.push_back ({ (double) (*xy)[0], (double) (*xy)[1] });
+                }
+            }
+            else if (x.custom && x.manualKind == ShaperSettings::ManualKind::Points)
+            {
+                warnings.add (where + ".shaper.curve: missing, using the generated shape");
+                x.custom = false;
+            }
+            p.shaper = clamped (x);
+        }
+
+        const auto fx = o.getProperty ("effects", var());
+        if (fx.isObject())
+        {
+            PointEffects e;
+            e.fadeInMs = number (fx, "fadeInMs", 0.0, 0.0, 2000.0, where + ".effects");
+            e.fadeOutMs = number (fx, "fadeOutMs", 0.0, 0.0, 2000.0, where + ".effects");
+            e.reverse = flag (fx, "reverse", false);
+            e.lowpassHz = number (fx, "lowpassHz", 20000.0, 200.0, 20000.0, where + ".effects");
+            e.highpassHz = number (fx, "highpassHz", 20.0, 20.0, 5000.0, where + ".effects");
+            e.chainOrder = normalisedChainOrder (text (fx, "chainOrder", "cmdr"));
+            if (const auto c = fx.getProperty ("character", var()); c.isObject())
+            {
+                e.character.enabled = flag (c, "enabled", false);
+                if (auto t = characterTypeFromString (text (c, "type", "saturation")))
+                    e.character.type = *t;
+                else
+                    warnings.add (where + ".effects.character.type: unknown, using saturation");
+                e.character.amountPercent = number (c, "amountPercent", 50.0, 0.0, 100.0, where + ".effects.character");
+                e.character.mixPercent = number (c, "mixPercent", 100.0, 0.0, 100.0, where + ".effects.character");
+            }
+            if (const auto m = fx.getProperty ("modulation", var()); m.isObject())
+            {
+                e.modulation.enabled = flag (m, "enabled", false);
+                if (auto t = modulationTypeFromString (text (m, "type", "chorus")))
+                    e.modulation.type = *t;
+                else
+                    warnings.add (where + ".effects.modulation.type: unknown, using chorus");
+                e.modulation.rateHz = number (m, "rateHz", 1.0, 0.05, 20.0, where + ".effects.modulation");
+                e.modulation.depthPercent = number (m, "depthPercent", 50.0, 0.0, 100.0, where + ".effects.modulation");
+                e.modulation.mixPercent = number (m, "mixPercent", 50.0, 0.0, 100.0, where + ".effects.modulation");
+            }
+            if (const auto d = fx.getProperty ("delay", var()); d.isObject())
+            {
+                e.delay.enabled = flag (d, "enabled", false);
+                e.delay.sync = flag (d, "sync", false);
+                e.delay.timeMs = number (d, "timeMs", 250.0, 1.0, limits::maxDelayMs, where + ".effects.delay");
+                if (auto t = stutterDivisionFromString (text (d, "division", "1/8")))
+                    e.delay.division = *t;
+                else
+                    warnings.add (where + ".effects.delay.division: unknown, using 1/8");
+                e.delay.feedbackPercent = number (d, "feedbackPercent", 35.0, 0.0, 95.0, where + ".effects.delay");
+                e.delay.pingPong = flag (d, "pingPong", false);
+                e.delay.lowpassHz = number (d, "lowpassHz", 8000.0, 500.0, 20000.0, where + ".effects.delay");
+                e.delay.mixPercent = number (d, "mixPercent", 30.0, 0.0, 100.0, where + ".effects.delay");
+            }
+            if (const auto r = fx.getProperty ("reverb", var()); r.isObject())
+            {
+                e.reverb.enabled = flag (r, "enabled", false);
+                if (auto t = reverbTypeFromString (text (r, "type", "room")))
+                    e.reverb.type = *t;
+                else
+                    warnings.add (where + ".effects.reverb.type: unknown, using room");
+                e.reverb.sizePercent = number (r, "sizePercent", 50.0, 0.0, 100.0, where + ".effects.reverb");
+                e.reverb.decayPercent = number (r, "decayPercent", 50.0, 0.0, 100.0, where + ".effects.reverb");
+                e.reverb.predelayMs = number (r, "predelayMs", 10.0, 0.0, limits::maxPredelayMs, where + ".effects.reverb");
+                e.reverb.mixPercent = number (r, "mixPercent", 25.0, 0.0, 100.0, where + ".effects.reverb");
+                e.reverb.outputDb = number (r, "outputDb", 0.0, -24.0, 6.0, where + ".effects.reverb");
+            }
+            p.effects = clamped (e);
+        }
         return p;
     }
 
@@ -251,6 +568,11 @@ struct Reader
         else
             warnings.add (where + ".rhythm: unknown value, using 1/4");
 
+        if (auto m = timeModeFromString (text (o, "timeMode", "beats")))
+            s.timeMode = *m;
+        else
+            warnings.add (where + ".timeMode: unknown value, using beats");
+
         s.mixPercent = number (o, "mixPercent", 70.0, limits::minMix, limits::maxMix, where);
 
         if (auto m = spatialModeFromString (text (o, "spatialMode", "stereo")))
@@ -274,6 +596,16 @@ struct Reader
                     s.points.push_back (point (arr->getReference (i), where + ".points[" + juce::String (i) + "]"));
             }
         }
+        // Optional (B9): scenes saved before have no live block and load with it off.
+        if (const auto live = o.getProperty ("live", var()); live.isObject())
+        {
+            s.live.enabled = flag (live, "enabled", false);
+            s.live.wetPercent = number (live, "wetPercent", 100.0, 0.0, 100.0, where + ".live");
+            s.live.cycleBeats = number (live, "cycleBeats", 4.0, 0.25, 16.0, where + ".live");
+            if (const auto lp = live.getProperty ("point", var()); lp.isObject())
+                s.live.fx = point (lp, where + ".live.point");
+            s.live = clamped (s.live);
+        }
         return s;
     }
 };
@@ -286,7 +618,7 @@ void repairIdentity (Scene& scene, juce::StringArray& warnings)
 
     for (auto& p : scene.points)
     {
-        if (p.id.isEmpty() || seenIds.count (p.id) > 0)
+        if (p.id.isEmpty() || seenIds.count (p.id) > 0 || p.id == kLivePointId)
         {
             warnings.add ("scene " + scene.id + ": point with missing/duplicate id got a new id");
             p.id = makeId();
@@ -475,6 +807,76 @@ LoadResult<std::vector<VoicePreset>> voicePresetsFromJson (const juce::String& j
     }
 
     result.value = std::move (presets);
+    return result;
+}
+
+juce::String userPresetsToJson (const UserPresetFile& f)
+{
+    auto root = obj();
+    set (root, "format", "spatial-echo-user-presets");
+    set (root, "formatVersion", 1);
+    juce::Array<var> arr;
+    for (auto& p : f.presets)
+    {
+        auto o = obj();
+        set (o, "id", p.id);
+        set (o, "name", p.name);
+        set (o, "description", p.description);
+        set (o, "point", pointToVar (p.content));
+        arr.add (o);
+    }
+    set (root, "presets", arr);
+    juce::Array<var> fav;
+    for (auto& id : f.favourites)
+        fav.add (id);
+    set (root, "favourites", fav);
+    return juce::JSON::toString (root, juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::multiLine).withMaxDecimalPlaces (17));
+}
+
+LoadResult<UserPresetFile> userPresetsFromJson (const juce::String& json)
+{
+    LoadResult<UserPresetFile> result;
+    auto header = parseAndCheckHeader (json, "spatial-echo-user-presets", 1);
+    if (! header)
+    {
+        result.error = header.error;
+        return result;
+    }
+    Reader reader { result.warnings };
+    UserPresetFile f;
+    std::set<juce::String> ids;
+    if (const auto* arr = header.value->getProperty ("presets", var()).getArray())
+    {
+        int i = 0;
+        for (auto& v : *arr)
+        {
+            const auto where = "presets[" + juce::String (i++) + "]";
+            if (! v.isObject())
+            {
+                result.warnings.add (where + ": not an object, skipped");
+                continue;
+            }
+            UserPointPreset p;
+            p.id = Reader::text (v, "id");
+            if (p.id.isEmpty() || ids.count (p.id) > 0)
+            {
+                p.id = "user." + makeId();
+                result.warnings.add (where + ": missing or duplicate id, regenerated");
+            }
+            ids.insert (p.id);
+            p.name = Reader::text (v, "name", "Preset");
+            p.description = Reader::text (v, "description");
+            const auto pt = v.getProperty ("point", var());
+            if (pt.isObject())
+                p.content = reader.point (pt, where + ".point");
+            f.presets.push_back (std::move (p));
+        }
+    }
+    if (const auto* fav = header.value->getProperty ("favourites", var()).getArray())
+        for (auto& v : *fav)
+            if (v.isString())
+                f.favourites.addIfNotAlreadyThere (v.toString());
+    result.value = std::move (f);
     return result;
 }
 
