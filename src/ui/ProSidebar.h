@@ -26,7 +26,7 @@ public:
     std::function<void (const juce::String& categoryId)> onCategory;
     void setActiveCategory (const juce::String& id);
 
-    static constexpr const char* kCategories[] { "shaper", "stutter", "pitch", "filters", "delay", "reverb",
+    static constexpr const char* kCategories[] { "shaper", "stutter", "pitch", "filters", "chain", "delay", "reverb",
                                                  "modulation", "character", "space", "time" };
 
     // Public for the tests.

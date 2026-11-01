@@ -35,6 +35,67 @@ const char* kRateNames[] { "N\xc2\xba de cortes", "Milisegundos", "Divisi\xc3\xb
 
 std::optional<StutterSettings> PointPanel::stutterClipboard;
 
+ChainOrderView::ChainOrderView()
+{
+    for (int i = 0; i < 4; ++i)
+    {
+        auto& row = rows[i];
+        row.enable.onClick = [this, i] { if (onEnableChange) onEnableChange (rows[i].stage, rows[i].enable.getToggleState()); };
+        row.up.onClick = [this, i] { move (i, -1); };
+        row.down.onClick = [this, i] { move (i, +1); };
+        addAndMakeVisible (row.enable);
+        addAndMakeVisible (row.up);
+        addAndMakeVisible (row.down);
+    }
+    setState ({});
+}
+
+void ChainOrderView::setState (const PointEffects& fx)
+{
+    current = normalisedChainOrder (fx.chainOrder);
+    for (int i = 0; i < 4; ++i)
+    {
+        auto& row = rows[i];
+        row.stage = current[i];
+        const bool on = row.stage == 'c' ? fx.character.enabled : row.stage == 'm' ? fx.modulation.enabled
+                      : row.stage == 'd' ? fx.delay.enabled : fx.reverb.enabled;
+        row.enable.setButtonText (juce::String (i + 1) + ".  " + chainStageName (row.stage));
+        row.enable.setToggleState (on, juce::dontSendNotification);
+        row.up.setEnabled (i > 0);
+        row.down.setEnabled (i < 3);
+    }
+    repaint();
+}
+
+void ChainOrderView::move (int index, int delta)
+{
+    const int j = index + delta;
+    if (j < 0 || j > 3)
+        return;
+    auto chars = current.toStdString();
+    std::swap (chars[(size_t) index], chars[(size_t) j]);
+    if (onOrderChange)
+        onOrderChange (juce::String (chars));
+}
+
+void ChainOrderView::resized()
+{
+    auto r = getLocalBounds();
+    for (auto& row : rows)
+    {
+        auto line = r.removeFromTop (kRowHeight);
+        row.down.setBounds (line.removeFromRight (28).reduced (1));
+        row.up.setBounds (line.removeFromRight (28).reduced (1));
+        row.enable.setBounds (line);
+    }
+}
+
+void ChainOrderView::paint (juce::Graphics& g)
+{
+    g.setColour (juce::Colours::white.withAlpha (0.03f));
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+}
+
 PointPanel::PointPanel (EditorContext& c) : ctx (c)
 {
     ctx.addListener (this);
@@ -161,10 +222,10 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
         h->setColour (juce::Label::textColourId, theme::textDim);
         content.addAndMakeVisible (*h);
     }
-    for (auto* h : { &soundTitle, &timeTitle, &spaceTitle, &stutterTitle, &effectsTitle, &charTitle, &modTitle, &delayTitle,
+    for (auto* h : { &soundTitle, &timeTitle, &spaceTitle, &stutterTitle, &effectsTitle, &chainTitle, &charTitle, &modTitle, &delayTitle,
                      &reverbTitle, &shaperTitle })
         h->onToggle = [this] { resized(); };
-    for (auto* h : { &stutterTitle, &effectsTitle, &charTitle, &modTitle, &delayTitle, &reverbTitle })
+    for (auto* h : { &stutterTitle, &effectsTitle, &chainTitle, &charTitle, &modTitle, &delayTitle, &reverbTitle })
         h->setOpen (false);
     stutterToggle.setTooltip (u8 ("Corta la repetici\xc3\xb3n en trozos cortos repetidos (A-A-A-A)"));
     stutterToggle.onClick = [this] { editPrimary ([on = stutterToggle.getToggleState()] (Scene&, Point& p) { p.stutter.enabled = on; }); };
@@ -279,6 +340,24 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
         content.addAndMakeVisible (b);
     };
     auto fxEdit = [this] (auto fn) { return [this, fn] { editPrimary ([fn] (Scene& s, Point& p) { auto e = p.effects; fn (e); setEffects (s, p.id, e); }); }; };
+
+    // Chain order
+    chainTitle.setText (u8 ("CADENA DE EFECTOS (ORDEN)"), juce::dontSendNotification);
+    chainTitle.setFont (theme::font (11.5f, true));
+    chainTitle.setColour (juce::Label::textColourId, theme::textDim);
+    content.addAndMakeVisible (chainTitle);
+    content.addAndMakeVisible (chainOrder);
+    chainOrder.onOrderChange = [this, fxEdit] (const juce::String& order) { fxEdit ([order] (PointEffects& e) { e.chainOrder = order; })(); };
+    chainOrder.onEnableChange = [this, fxEdit] (juce::juce_wchar stage, bool on)
+    {
+        fxEdit ([stage, on] (PointEffects& e)
+        {
+            if (stage == 'c') e.character.enabled = on;
+            else if (stage == 'm') e.modulation.enabled = on;
+            else if (stage == 'd') e.delay.enabled = on;
+            else e.reverb.enabled = on;
+        })();
+    };
 
     // Character
     fxTitle (charTitle, "CAR\xc3\x81" "CTER / DISTORSI\xc3\x93N", charToggle);
@@ -655,6 +734,7 @@ void PointPanel::refresh()
     setIfIdle (highpass, fx.highpassHz);
     reverseToggle.setToggleState (fx.reverse, juce::dontSendNotification);
     charToggle.setToggleState (fx.character.enabled, juce::dontSendNotification);
+    chainOrder.setState (fx);
     modToggle.setToggleState (fx.modulation.enabled, juce::dontSendNotification);
     delayToggle.setToggleState (fx.delay.enabled, juce::dontSendNotification);
     reverbToggle.setToggleState (fx.reverb.enabled, juce::dontSendNotification);
@@ -800,6 +880,7 @@ SectionHeader* PointPanel::headerFor (const juce::String& id)
     if (id == "reverb") return &reverbTitle;
     if (id == "modulation") return &modTitle;
     if (id == "character") return &charTitle;
+    if (id == "chain") return &chainTitle;
     if (id == "space") return &spaceTitle;
     if (id == "time") return &timeTitle;
     return nullptr;
@@ -930,6 +1011,12 @@ int PointPanel::layoutContent (int width)
         labelled (highpassL, highpass);
         place (effectsNote, 16);
     };
+    auto layoutChain = [&]
+    {
+        section ("chain", chainTitle);
+        place (chainOrder, ChainOrderView::kRowHeight * 4);
+        place (chainNote, 16);
+    };
     auto layoutChar = [&]
     {
         section ("character", charTitle, &charToggle);
@@ -965,7 +1052,6 @@ int PointPanel::layoutContent (int width)
         labelled (reverbPredelayL, reverbPredelay, pro);
         labelled (reverbMixL, reverbMix);
         labelled (reverbOutputL, reverbOutput, pro);
-        place (chainNote, 16);
     };
     auto layoutShaper = [&]
     {
@@ -998,12 +1084,12 @@ int PointPanel::layoutContent (int width)
 
     if (pro)
     {
-        layoutShaper(); layoutStutter(); layoutSound(); layoutFilters(); layoutChar(); layoutMod(); layoutDelay(); layoutReverb();
+        layoutShaper(); layoutStutter(); layoutSound(); layoutFilters(); layoutChain(); layoutChar(); layoutMod(); layoutDelay(); layoutReverb();
         layoutTime(); layoutSpace();
     }
     else
     {
-        layoutSound(); layoutSpace(); layoutTime(); layoutShaper(); layoutStutter(); layoutFilters(); layoutChar(); layoutMod();
+        layoutSound(); layoutSpace(); layoutTime(); layoutShaper(); layoutStutter(); layoutFilters(); layoutChain(); layoutChar(); layoutMod();
         layoutDelay(); layoutReverb();
     }
     r.removeFromTop (6);

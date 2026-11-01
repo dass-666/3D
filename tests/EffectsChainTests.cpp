@@ -511,3 +511,61 @@ TEST_CASE ("Effect chain and formants persist and survive clamping")
     CHECK (c.delay.timeMs == limits::maxDelayMs);
     CHECK (c.reverb.outputDb == 6.0);
 }
+
+TEST_CASE ("Chain order: a permutation of cmdr is honoured (delay before character differs from character before delay), invalid strings repaired, persisted")
+{
+    CHECK (normalisedChainOrder ("rdmc") == "rdmc");
+    CHECK (normalisedChainOrder ("") == "cmdr");
+    CHECK (normalisedChainOrder ("zzrr") == "rcmd");
+    CHECK (normalisedChainOrder ("DC") == "dcmr");
+    CHECK (clamped (PointEffects {}).chainOrder == "cmdr");
+
+    // Character (hard bitcrusher) then delay vs delay then character: the
+    // echoes are crushed copies in one case and crushed-after-mixing in the
+    // other, so the outputs differ while both keep the same length.
+    const double sr = 48000.0;
+    const int n = 4096;
+    auto run = [&] (const juce::String& order)
+    {
+        PointEffects fx;
+        fx.chainOrder = order;
+        fx.character.enabled = true;
+        fx.character.type = CharacterSettings::Type::Bitcrusher;
+        fx.character.amountPercent = 90.0;
+        fx.character.mixPercent = 100.0;
+        fx.delay.enabled = true;
+        fx.delay.sync = false;
+        fx.delay.timeMs = 20.0;
+        fx.delay.feedbackPercent = 60.0;
+        fx.delay.mixPercent = 100.0;
+        PointFxChain chain;
+        chain.prepare (sr, n);
+        std::vector<float> l ((size_t) n), r ((size_t) n);
+        for (int i = 0; i < n; ++i)
+            l[(size_t) i] = r[(size_t) i] = 0.5f * std::sin (2.0 * juce::MathConstants<double>::pi * 300.0 * i / sr) * (i < 800 ? 1.0f : 0.0f);
+        chain.noteInput (0.5f, fx);
+        chain.process (fx, l.data(), r.data(), n, 120.0);
+        return l;
+    };
+    const auto a = run ("cmdr"), b = run ("dcmr");
+    double diff = 0.0, energy = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        diff += std::abs (a[(size_t) i] - b[(size_t) i]);
+        energy += std::abs (a[(size_t) i]);
+    }
+    CHECK (energy > 1.0);
+    CHECK (diff > 0.05 * energy);
+
+    Scene s;
+    Point p;
+    p.id = "p";
+    p.effects.chainOrder = "rdmc";
+    s.points.push_back (p);
+    Document d;
+    d.scenes.push_back (s);
+    d.activeSceneId = s.id;
+    const auto back = documentFromJson (toJson (d));
+    REQUIRE (back);
+    CHECK (back.value->scenes[0].points[0].effects.chainOrder == "rdmc");
+}

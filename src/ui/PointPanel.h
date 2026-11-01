@@ -48,6 +48,32 @@ private:
     bool open = true;
 };
 
+// Order and enables of the per-repetition effect chain: one row per stage
+// with its name, on/off and up/down buttons.
+class ChainOrderView final : public juce::Component
+{
+public:
+    ChainOrderView();
+    void setState (const PointEffects&);
+    std::function<void (const juce::String& order)> onOrderChange;
+    std::function<void (juce::juce_wchar stage, bool on)> onEnableChange;
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    juce::String order() const { return current; }
+    static constexpr int kRowHeight = 26;
+
+private:
+    struct Row
+    {
+        juce::juce_wchar stage = 'c';
+        juce::ToggleButton enable;
+        juce::TextButton up { juce::String::fromUTF8 ("\xe2\x96\xb2") }, down { juce::String::fromUTF8 ("\xe2\x96\xbc") };
+    };
+    void move (int index, int delta);
+    juce::String current = "cmdr";
+    Row rows[4];
+};
+
 class PointPanel final : public juce::Component, private EditorContext::Listener
 {
 public:
@@ -105,7 +131,8 @@ private:
     juce::Slider fadeIn, fadeOut, lowpass, highpass;
     juce::ToggleButton reverseToggle { juce::String::fromUTF8 ("Reverse (al rev\xc3\xa9s)") };
     // Effect chain (character -> modulation -> delay -> reverb)
-    SectionHeader charTitle, modTitle, delayTitle, reverbTitle;
+    SectionHeader chainTitle, charTitle, modTitle, delayTitle, reverbTitle;
+    ChainOrderView chainOrder;
     juce::Label chainNote;
     juce::ToggleButton charToggle { "Activar" }, modToggle { "Activar" }, delayToggle { "Activar" }, reverbToggle { "Activar" },
                        delaySyncToggle { "Sincronizar al BPM" }, pingPongToggle { "Ping-pong" };

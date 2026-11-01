@@ -219,7 +219,7 @@ struct ShaperPreset
 };
 const std::vector<ShaperPreset>& shaperPresets();
 
-// Per-repetition effect chain, all with real processing, in this fixed order
+// Per-repetition effect chain, all with real processing, by default in this order
 // after the voice itself (pitch/formant, filters, Volume Shaper, fades, pan):
 // character -> modulation -> delay -> reverb. Each has its own enable and mix.
 struct CharacterSettings
@@ -279,10 +279,15 @@ struct PointEffects
     ModulationSettings modulation;
     DelaySettings delay;
     ReverbSettings reverb;
+    // Order of the chain: a permutation of "cmdr" (character, modulation,
+    // delay, reverb). Default = the studio order. Invalid strings are repaired.
+    juce::String chainOrder = "cmdr";
     bool operator== (const PointEffects&) const = default;
     bool usesChain() const noexcept { return character.enabled || modulation.enabled || delay.enabled || reverb.enabled; }
 };
 PointEffects clamped (PointEffects);
+juce::String normalisedChainOrder (const juce::String&);  // always a permutation of "cmdr"
+juce::String chainStageName (juce::juce_wchar stage);     // 'c' -> "Carácter"...
 juce::String toString (CharacterSettings::Type);
 std::optional<CharacterSettings::Type> characterTypeFromString (const juce::String&);
 juce::String toString (ModulationSettings::Type);

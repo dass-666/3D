@@ -423,7 +423,32 @@ PointEffects clamped (PointEffects e)
     e.reverb.predelayMs = std::clamp (e.reverb.predelayMs, 0.0, limits::maxPredelayMs);
     e.reverb.mixPercent = std::clamp (e.reverb.mixPercent, 0.0, 100.0);
     e.reverb.outputDb = std::clamp (e.reverb.outputDb, -24.0, 6.0);
+    e.chainOrder = normalisedChainOrder (e.chainOrder);
     return e;
+}
+
+juce::String normalisedChainOrder (const juce::String& in)
+{
+    juce::String out;
+    for (auto c : in.toLowerCase())
+        if (juce::String ("cmdr").containsChar (c) && ! out.containsChar (c))
+            out << juce::String::charToString (c);
+    for (auto c : juce::String ("cmdr"))
+        if (! out.containsChar (c))
+            out << juce::String::charToString (c);
+    return out;
+}
+
+juce::String chainStageName (juce::juce_wchar stage)
+{
+    switch (stage)
+    {
+        case 'c': return juce::String::fromUTF8 ("Car\xc3\xa1" "cter");
+        case 'm': return juce::String::fromUTF8 ("Modulaci\xc3\xb3n");
+        case 'd': return "Delay";
+        case 'r': return "Reverb";
+        default:  return {};
+    }
 }
 
 juce::String toString (CharacterSettings::Type t)

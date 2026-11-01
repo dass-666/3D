@@ -1,8 +1,8 @@
 #pragma once
 
 // Per-repetition effect chain, run on the audio thread without allocation:
-// character -> modulation -> delay -> reverb, in that fixed order (distortion
-// before time effects keeps echoes and tails clean; the usual studio order).
+// character -> modulation -> delay -> reverb by default (distortion before time
+// effects keeps echoes and tails clean); PointEffects::chainOrder can reorder.
 // One chain per repetition slot; the engine feeds it the voice's stereo
 // signal and adds the result to the output.
 

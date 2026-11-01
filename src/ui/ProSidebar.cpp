@@ -12,7 +12,7 @@ juce::String u8 (const char* s) { return juce::String::fromUTF8 (s); }
 struct CategoryInfo { const char* id; const char* name; };
 const CategoryInfo kCategoryInfo[] {
     { "shaper", "Cortes / Volume Shaper" }, { "stutter", "Stutter / Repetici\xc3\xb3n" }, { "pitch", "Pitch y formantes" },
-    { "filters", "Filtros y fundidos" }, { "delay", "Delay" }, { "reverb", "Reverb" }, { "modulation", "Modulaci\xc3\xb3n" },
+    { "filters", "Filtros y fundidos" }, { "chain", "Cadena de efectos (orden)" }, { "delay", "Delay" }, { "reverb", "Reverb" }, { "modulation", "Modulaci\xc3\xb3n" },
     { "character", "Car\xc3\xa1" "cter (Robot, Monster, etc.)" }, { "space", "Espacio / Paneo" }, { "time", "Tiempo del punto" },
 };
 }  // namespace

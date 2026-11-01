@@ -104,20 +104,38 @@ void PointFxChain::noteInput (float peak, const PointEffects& fx) noexcept
 
 void PointFxChain::process (const PointEffects& fx, float* l, float* r, int n, double bpm) noexcept
 {
-    if (fx.character.enabled)
-        processCharacter (fx.character, l, r, n);
-    if (fx.modulation.enabled)
-        processModulation (fx.modulation, l, r, n);
-    if (fx.delay.enabled)
-        processDelay (fx.delay, l, r, n, bpm);
-    else
-        fbD = 0.0f;
-    if (fx.reverb.enabled)
-        processReverb (fx.reverb, l, r, n);
-    else if (reverbActive)
+    // Stages run in the point's order (a permutation of "cmdr"; the string is
+    // validated on the message thread, unknown characters are ignored here).
+    const auto* order = fx.chainOrder.toRawUTF8();
+    for (int i = 0; i < 4 && order[i] != 0; ++i)
     {
-        reverb.reset();  // switched off: the tail stops (the voice itself still sounds)
-        reverbActive = false;
+        switch (order[i])
+        {
+            case 'c':
+                if (fx.character.enabled)
+                    processCharacter (fx.character, l, r, n);
+                break;
+            case 'm':
+                if (fx.modulation.enabled)
+                    processModulation (fx.modulation, l, r, n);
+                break;
+            case 'd':
+                if (fx.delay.enabled)
+                    processDelay (fx.delay, l, r, n, bpm);
+                else
+                    fbD = 0.0f;
+                break;
+            case 'r':
+                if (fx.reverb.enabled)
+                    processReverb (fx.reverb, l, r, n);
+                else if (reverbActive)
+                {
+                    reverb.reset();  // switched off: the tail stops (the voice itself still sounds)
+                    reverbActive = false;
+                }
+                break;
+            default: break;
+        }
     }
     tailLeft = std::max (0, tailLeft - n);
     primed = true;

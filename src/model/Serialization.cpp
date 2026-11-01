@@ -178,6 +178,7 @@ var pointToVar (const Point& p)
         set (x, "outputDb", r.outputDb);
         set (fx, "reverb", x);
     }
+    set (fx, "chainOrder", p.effects.chainOrder);
     set (o, "effects", fx);
     return o;
 }
@@ -430,6 +431,7 @@ struct Reader
             e.reverse = flag (fx, "reverse", false);
             e.lowpassHz = number (fx, "lowpassHz", 20000.0, 200.0, 20000.0, where + ".effects");
             e.highpassHz = number (fx, "highpassHz", 20.0, 20.0, 5000.0, where + ".effects");
+            e.chainOrder = normalisedChainOrder (text (fx, "chainOrder", "cmdr"));
             if (const auto c = fx.getProperty ("character", var()); c.isObject())
             {
                 e.character.enabled = flag (c, "enabled", false);
