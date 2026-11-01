@@ -89,7 +89,7 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
 ## 9. Volume Shaper / cortes
 1. Repetición 4, sección «Volume Shaper / cortes»: Activar, preset «Gate»
    (8 cortes cuadrados, 100 %). La línea temporal dibuja la curva sobre el
-   bloque. Dispara: 8 cortes **uniformes**, sin clics (fundido 3 ms).
+   bloque. Dispara: 8 cortes **uniformes**, sin clics (ataque 1 ms, liberación 5 ms).
 2. «Nº de cortes» 16, profundidad 60 %, apertura 30 %: los cortes se acortan y
    la parte cerrada no llega al silencio.
 3. Ritmo «Milisegundos» 100 ms: 10 cortes por segundo, independiente del BPM.
@@ -98,7 +98,47 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
    «Fade final» (solo la segunda mitad).
 5. En Pro: «Toda la repetición» desactivado + «Inicio/Fin zona» aplica la curva
    solo a esa parte. Con Stutter activo, la curva se aplica a cada trozo.
-6. Lo que no existe: edición manual de puntos de la curva (la interfaz lo dice).
+
+## 9b. Cortes avanzados (nueva fase)
+1. **Nivel con muchos cortes.** Repetición con el preset «Gate» y 32 cortes:
+   compara con el mismo fragmento sin curva. Esperado: los picos se conservan
+   (no hay rampa que «no llegue»); el nivel medio baja porque la mitad del
+   tiempo es silencio. Activa «Nivel automático (hasta +6 dB)»: el volumen
+   percibido vuelve a acercarse al original. «Ganancia post» añade hasta ±12 dB
+   y el limitador de salida sigue protegiendo (no debe distorsionar).
+2. «Cortes» hasta 256. La pista «Máx. útil aquí: N cortes» (Pro) dice cuántos
+   caben con el ataque/liberación actuales en ese fragmento; por encima sólo
+   quedan chasquidos (y la pista lo avisa).
+3. Pro: «Ataque» 0,1–50 ms y «Liberación» 0,1–200 ms. Ataque corto = transitorio
+   intacto; liberación larga = cortes más suaves. Comprueba que no hay clics
+   con ataque 0,1 ms (es lo más brusco posible).
+4. «Distribución» Acelerando / Desacelerando + «Intensidad»: los cortes se
+   acortan o alargan progresivamente (sólo con «Nº de cortes»).
+5. Pro: «Patrón» `x.xx.x..` (x suena, . mudo): cortes mudos exactamente donde
+   hay punto. «Duración» 500 ms: la zona cortada acaba a los 500 ms y el resto
+   suena entero.
+6. Modo Libre (ms): cambia el BPM del proyecto y los cortes por «Nº» y por
+   «Milisegundos» no cambian; sólo «División del BPM» sigue al tempo.
+7. Presets nuevos: Fast Gate, Machine Gun, Vocal Chop (patrón), Glitch Vocal,
+   Cortes desacelerados, Fade Stutter.
+
+## 9c. Editor de curva (Pro)
+1. Botón «Editor de curva…»: se abre sobre la ventana con la onda de esa
+   repetición, la curva encima (blanca) y la regla en ms. Las partes mudas se
+   ven oscuras en la onda; lo que suena, brillante.
+2. Ctrl+rueda: zoom horizontal; rueda: desplazar; «↕+/↕−»: zoom vertical de la
+   onda; «Todo»: ver entera.
+3. «Manual»: la forma generada pasa a puntos. Doble clic añade un punto;
+   arrastrar lo mueve (sin cruzar a los vecinos); clic derecho o Supr lo quita.
+   «▶ Escuchar» dispara sólo esa repetición con la curva actual: lo que se ve
+   es lo que suena.
+4. Deshacer/Rehacer (Ctrl+Z / Ctrl+Y). Copiar en una repetición, Pegar en
+   otra. «Duplicar» repite la curva dos veces en el mismo tiempo. «Espejo» la
+   invierte en el tiempo.
+5. «Guardar B», cambia algo, «A > B» / «B > A» alterna entre las dos versiones.
+6. Arrastrar en la regla selecciona un rango; «Selección → zona» limita la
+   curva a ese rango (el resto suena sin tocar).
+7. Guarda, cierra y reabre el proyecto: los puntos manuales vuelven.
 
 ## 10. Entrada del host (Mixer)
 1. Con audio sonando en la pista del Mixer donde está el plugin, el botón
@@ -118,8 +158,44 @@ OK/FALLA en cada paso y adjunta `Documentos/Spatial Echo Studio/diagnostico.log`
 2. Reverse: la repetición suena al revés (solo esa).
 3. Paso bajo 800 Hz: más oscura. Paso alto 1500 Hz: más fina. Doble clic en el
    control lo apaga.
-4. Delay, reverb, modulación, formantes y capas vocales: **no implementados**
-   (la interfaz lo indica; no hay controles).
+
+## 12. Cadena de efectos por repetición (nueva fase)
+Orden fijo: carácter → modulación → delay → reverb. Cada bloque tiene su
+«Activar» y su «Mezcla» (Pro). Hasta 16 repeticiones con cadena a la vez; la
+17.ª suena sin efectos (la interfaz lo dice).
+1. **Delay.** Activar, 250 ms, feedback 50 %, mezcla 40 %: ecos cada 250 ms
+   que se apagan. «Sincronizar al BPM» + 1/8: a 120 BPM los ecos caen cada
+   250 ms y cambian al cambiar el tempo. «Ping-pong»: el primer eco va a la
+   izquierda, el segundo a la derecha. Cambiar el tiempo mientras suena desliza
+   el eco (sin clics).
+2. **Reverb.** Hall, tamaño 80, decay 85, predelay 30 ms, mezcla 60: cola
+   larga que sigue sonando después de la repetición y se apaga sola. Room con
+   decay 10: cola corta. Plate: más brillante. «Salida» baja la reverb sin
+   tocar la voz.
+3. **Colas.** Con delay o reverb sonando, cambia otro parámetro o elimina la
+   repetición: la cola debe seguir hasta apagarse, no cortarse.
+4. **Carácter.** Saturación suave 80 %: más cuerpo/armónicos, sin subir de
+   volumen de forma peligrosa. Overdrive: más agresivo. Bitcrusher 100 %:
+   granulado digital. Teléfono: banda estrecha. Lo-fi: apagado y sucio. Robot
+   (anillo) 50 %: voz metálica sin tono reconocible.
+5. **Modulación.** Trémolo 5 Hz profundidad 100 %: pulsa 5 veces por segundo.
+   Chorus 1 Hz: ensancha. Flanger: barrido metálico.
+6. **Formantes.** «Formantes» −6 st con pitch 0: la voz suena «más grande» sin
+   cambiar la nota. +4 st: más fina. Mientras se pre-renderiza aparece
+   «procesando tono…» y suena el original.
+7. **Presets de voz.** Monster (−9 st, formantes −6, saturación), Robot
+   (anillo), Fantasma (+5 st, formantes +3, chorus + hall): deben sonar
+   claramente distintos entre sí y del Original, no sólo por el tono.
+8. **Presets creativos** (desplegable «Preset creativo»): Vocal Chop, Fast
+   Gate, Trance Gate, Machine Gun, Glitch Vocal, Robot, Fantasma, Monster,
+   Radio/Teléfono, Wide Vocal, Echo Throw, Fade Stutter, Reverse Tail. Cada uno
+   cambia cortes, efectos y/o voz de las repeticiones seleccionadas.
+9. **CPU.** 16 repeticiones con las cuatro secciones activas a 44,1/48/96 kHz:
+   sin cortes de audio en FL Studio (indica el tamaño de búfer usado).
+10. **Persistencia.** Guarda, cierra y reabre: cadena, formantes y curva
+    manual vuelven idénticos.
+11. No implementado (la interfaz no lo ofrece): reordenar la cadena, capas
+    vocales, armonización, «aceleración progresiva» del Stutter.
 
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la

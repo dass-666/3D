@@ -424,3 +424,63 @@ TEST_CASE ("Stutter: End and Manual regions take the slice from the right place"
     st.manualEnd = 0.9;
     CHECK (rms (run (st).data() + 100, 4000) > 0.3f);
 }
+
+TEST_CASE ("Processor: the effect chain and the formant render reach the host output (Robot preset vs. clean)")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const double sr = 48000.0;
+    const int block = 480;
+    auto render = [&] (bool robot)
+    {
+        SpatialEchoProcessor p;
+        p.prepareToPlay (sr, block);
+        REQUIRE (p.loadSourceBytes (wavOf (sine (440.0, sr, 0.5), sr), "C:/la.wav").wasOk());
+        p.editScene ([robot] (Scene& s)
+        {
+            s.points.clear();
+            Point a;
+            a.id = "a"; a.number = 1; a.timing.beat = 0.0;
+            s.points.push_back (a);
+            if (robot)
+                applyVoicePreset (s, { "a" }, *VoicePresetLibrary().find (presetIds::robot));
+        });
+        p.getParameters().getParameter (params::mix)->setValueNotifyingHost (1.0f);
+        p.getParameters().getParameter (params::protect)->setValueNotifyingHost (0.0f);
+        const auto t0 = juce::Time::getMillisecondCounter();
+        while (p.numPendingPitchRenders() > 0 && juce::Time::getMillisecondCounter() - t0 < 20000)
+            juce::Thread::sleep (10);
+        REQUIRE (p.numPendingPitchRenders() == 0);
+        p.refreshPlan();
+        Head head;
+        head.info.setBpm (120.0);
+        head.info.setIsPlaying (true);
+        p.setPlayHead (&head);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, block);
+        std::vector<float> out;
+        p.requestPreview();
+        for (int b = 0; b < 100; ++b)
+        {
+            head.info.setPpqPosition (b * block * 2.0 / sr);
+            buf.clear();
+            p.processBlock (buf, midi);
+            for (int i = 0; i < block; ++i)
+                out.push_back (buf.getSample (0, i));
+        }
+        p.setPlayHead (nullptr);
+        return out;
+    };
+    const auto clean = render (false);
+    const auto robot = render (true);
+    const int from = (int) (0.15 * sr), win = (int) (0.25 * sr);
+    // Clean: 440 Hz. Robot (ring modulation at 20 + 200 * 0.55 = 130 Hz): 310 and 570 Hz sidebands, fundamental gone.
+    CHECK (std::abs (dominantHz (clean.data() + from, win, sr, 400.0, 480.0) - 440.0) < 5.0);
+    const double side = dominantHz (robot.data() + from, win, sr, 540.0, 600.0);
+    CHECK (std::abs (side - 570.0) < 8.0);
+    const float cleanRms = rms (clean.data() + from, win), robotRms = rms (robot.data() + from, win);
+    CHECK (robotRms > 0.2f * cleanRms);
+    double diff = 0.0;
+    for (int i = from; i < from + win; ++i)
+        diff += std::abs (clean[(size_t) i] - robot[(size_t) i]);
+    CHECK (diff / win > 0.05);
+}
