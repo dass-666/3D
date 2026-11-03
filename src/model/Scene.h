@@ -91,7 +91,8 @@ namespace limits
     inline constexpr double minPitch = -24.0, maxPitch = 24.0;
     inline constexpr double minFormant = -12.0, maxFormant = 12.0;
     inline constexpr double maxDelayMs = 2000.0, maxPredelayMs = 200.0;
-    inline constexpr int maxFxPoints = 16;  // repetitions that can carry their own effect chain at once
+    inline constexpr int maxFxPoints = 16;
+    inline constexpr double maxLiveEchoSeconds = 8.0;  // live repetitions further than this from the input are not played  // repetitions that can carry their own effect chain at once
     inline constexpr double minCharacter = 0.0, maxCharacter = 100.0;
     inline constexpr double minSpeed = 50.0, maxSpeed = 200.0;
     inline constexpr double minGainDb = -36.0, maxGainDb = 12.0;
@@ -379,14 +380,18 @@ inline constexpr const char* kLivePointId = "live";
 // «Procesar Mixer en vivo»: the audio arriving on the plugin's Mixer track is
 // processed continuously (filters, Volume Shaper as a cycle locked to the
 // host tempo, character/modulation/delay/reverb chain, pan/depth and gain),
-// mixed dry/wet. Pitch, formants and Stutter are NOT applied live (they need
-// the pre-rendered fragment); the repetitions keep working on top.
+// mixed dry/wet. Pitch, formants and Stutter are NOT applied to this main
+// path. With `echoes` on, every enabled repetition (point) also sounds live:
+// a delayed copy of the input at the point's moment, with its own position,
+// level, filters, Volume Shaper, Stutter, pitch/formants and effect chain
+// (see LiveEchoes). The repetitions of an imported fragment keep working on top.
 struct LiveSettings
 {
     LiveSettings() { fx.id = kLivePointId; }
     bool enabled = false;
     double wetPercent = 100.0;  // 0..100
     double cycleBeats = 4.0;    // length of the Volume Shaper cycle, 0.25..16 quarter notes
+    bool echoes = false;        // the points also repeat the live input (B11)
     Point fx;                   // shaper, effects, position and gainDb are used
     bool operator== (const LiveSettings&) const = default;
 };

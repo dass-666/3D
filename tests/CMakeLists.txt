@@ -17,7 +17,8 @@ add_executable(ses_tests
     ShaperLevelProbe.cpp
     EffectsChainTests.cpp
     ExportTests.cpp
-    LiveTests.cpp)
+    LiveTests.cpp
+    LiveEchoTests.cpp)
 
 target_link_libraries(ses_tests PRIVATE
     ses_shared

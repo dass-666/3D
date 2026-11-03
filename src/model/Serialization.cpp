@@ -234,6 +234,7 @@ var sceneToVar (const Scene& s)
     set (live, "enabled", s.live.enabled);
     set (live, "wetPercent", s.live.wetPercent);
     set (live, "cycleBeats", s.live.cycleBeats);
+    set (live, "echoes", s.live.echoes);
     set (live, "point", pointToVar (s.live.fx));
     set (o, "live", live);
     return o;
@@ -602,6 +603,7 @@ struct Reader
             s.live.enabled = flag (live, "enabled", false);
             s.live.wetPercent = number (live, "wetPercent", 100.0, 0.0, 100.0, where + ".live");
             s.live.cycleBeats = number (live, "cycleBeats", 4.0, 0.25, 16.0, where + ".live");
+            s.live.echoes = flag (live, "echoes", false);  // B11; older scenes: off
             if (const auto lp = live.getProperty ("point", var()); lp.isObject())
                 s.live.fx = point (lp, where + ".live.point");
             s.live = clamped (s.live);

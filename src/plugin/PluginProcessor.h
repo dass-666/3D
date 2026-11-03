@@ -3,6 +3,7 @@
 #include "audio/EchoEngine.h"
 #include "audio/HostCapture.h"
 #include "audio/LiveChain.h"
+#include "audio/LiveEchoes.h"
 #include "audio/OfflineRender.h"
 #include "audio/PitchRenderer.h"
 #include "audio/PlanExchange.h"
@@ -132,6 +133,8 @@ public:
 
     // True while «Procesar Mixer en vivo» is processing the input (or fading out). UI.
     bool isLiveProcessing() const noexcept { return liveProcessing.load (std::memory_order_relaxed); }
+    // Minimum distance of a pitched live echo (the stretcher's look-ahead), in seconds.
+    double getLiveEchoPitchLatency() const noexcept { return liveEchoLatency.load(); }
 
     // ---- «Exportar audio»: renders the repetitions to a WAV file on a
     // background thread (same engine and settings as what is heard). Message thread.
@@ -174,7 +177,9 @@ private:
 
     EchoEngine engine;
     LiveChain liveChain;
+    LiveEchoes liveEchoes;
     std::atomic<bool> liveProcessing { false };
+    std::atomic<double> liveEchoLatency { 0.0 };
     HostCapture capture;
     SafetyLimiter limiter;
     PlanExchange<PlaybackPlan> plans;

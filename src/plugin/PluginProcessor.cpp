@@ -179,6 +179,8 @@ void SpatialEchoProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     diagnostics.log ("prepareToPlay sr=" + juce::String (sampleRate) + " block=" + juce::String (samplesPerBlock));
     engine.prepare (sampleRate);
     liveChain.prepare (sampleRate, juce::jmax (samplesPerBlock * 2, 4096));
+    liveEchoes.prepare (sampleRate);
+    liveEchoLatency.store (liveEchoes.pitchLatencySamples() / sampleRate);
     capture.prepare (sampleRate, juce::jmax (1, getTotalNumInputChannels()));
     limiter.prepare (sampleRate);
     lastTrigger = triggerValue->load() > 0.5f;
@@ -205,6 +207,7 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     // Host input: keep the dry signal for later capture (always on; one block copy).
     capture.push (buffer, n);
+    liveEchoes.pushInput (buffer, n);  // raw input: the live echoes never hear the plugin's own output
 
     TransportInfo transport;
     if (auto* head = getPlayHead())
@@ -242,12 +245,16 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     // (the capture above keeps the raw input, so processed audio never feeds back into a capture).
     liveChain.process (buffer, n, plan != nullptr ? &plan->live : nullptr, transport,
                        transport.bpm.value_or (engine.lastBpmUsed()));
-    liveProcessing.store (liveChain.isProcessing(), std::memory_order_relaxed);
 
     wetLevel.setTargetValue (mixPercent->load() / 100.0f);
     const float wetStart = wetLevel.getCurrentValue();
     wetLevel.skip (n);
     const float wetEnd = wetLevel.getCurrentValue();
+
+    // «Ecos en vivo»: the points repeating the input, scaled by Mix like the fragment repetitions.
+    liveEchoes.process (buffer, n, plan != nullptr ? &plan->liveEchoes : nullptr, transport,
+                        transport.bpm.value_or (engine.lastBpmUsed()), wetStart, wetEnd);
+    liveProcessing.store (liveChain.isProcessing() || liveEchoes.isProcessing(), std::memory_order_relaxed);
 
     EngineRequests req;
     req.triggerRisingEdge = rising;
@@ -275,7 +282,7 @@ void SpatialEchoProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
-    if (protectValue->load() > 0.5f && (engine.numActiveVoices() > 0 || liveChain.isProcessing() || limiter.isReducing()))
+    if (protectValue->load() > 0.5f && (engine.numActiveVoices() > 0 || liveChain.isProcessing() || liveEchoes.isProcessing() || limiter.isReducing()))
         limiter.process (buffer);
     else
         limiter.idle();
@@ -415,6 +422,7 @@ void SpatialEchoProcessor::rebuildPlan()
 
     auto plan = buildPlan (scene, renderedSample, pitchRenderer.ready(), rate, lastPlanForSlots.get());
     plan->live = makeLivePlan (scene.live, rate);
+    plan->liveEchoes = makeLiveEchoPlan (scene, rate);
     lastPlanForSlots = std::make_shared<PlaybackPlan>();
     lastPlanForSlots->fx = plan->fx;
 

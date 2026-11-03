@@ -111,6 +111,38 @@ struct LivePlan
     float highpassCoef = 0.0f;
 };
 
+// «Ecos en vivo» (B11): one tap per enabled point, see LiveEchoes.
+struct LiveTap
+{
+    juce::uint64 key = 0;
+    bool freeTime = false;
+    double delayBeats = 0.0;     // used when ! freeTime
+    double delaySeconds = 0.0;   // used when freeTime
+    Placement placement;
+    float highpassCoef = 0.0f;
+    ShaperSettings shaper;       // read only on the audio thread
+    float shaperLevel = 1.0f;
+    PointEffects effects;        // read only; the POD order below is used
+    char order[4] { 'c', 'm', 'd', 'r' };
+    float pitchSemitones = 0.0f, formantSemitones = 0.0f;
+    bool pitched = false;
+    // Stutter (sliceCount == 0: a continuous echo)
+    int sliceCount = 0;
+    std::array<float, 32> sliceBeat {}, sliceLength {};
+    StutterSettings::Region stutterRegion = StutterSettings::Region::Start;
+    double manualStart = 0.0;  // fraction of the cycle (Manual region)
+};
+
+struct LiveEchoPlan
+{
+    bool enabled = false;
+    double cycleBeats = 4.0;
+    std::array<LiveTap, limits::maxFxPoints> taps {};
+    int numTaps = 0;
+    int skippedTooMany = 0;  // enabled points beyond limits::maxFxPoints
+    int skippedTooFar = 0;   // points further than limits::maxLiveEchoSeconds (at 120 BPM when in beats)
+};
+
 // Everything the audio thread needs, rendered at the host sample rate.
 // Immutable once published.
 struct PlaybackPlan
@@ -124,6 +156,7 @@ struct PlaybackPlan
     std::array<FxAssignment, limits::maxFxPoints> fx {};
     int pointsWithoutFx = 0;  // points whose chain did not fit (beyond maxFxPoints): they play dry
     LivePlan live;            // processing of the input (off unless the scene enables it)
+    LiveEchoPlan liveEchoes;  // the points repeating the input (off unless the scene enables it)
 
     const PlannedEcho* find (juce::uint64 key, int index) const noexcept;
     const PlannedEcho* find (juce::uint64 key) const noexcept { return find (key, 0); }
