@@ -121,6 +121,7 @@ private:
     // «Procesar Mixer en vivo» (shown when the live pseudo-point is selected)
     bool editingLive() const;
     juce::ToggleButton liveToggle { "Procesar" };
+    juce::ToggleButton liveEchoesToggle;
     juce::Slider liveWet;
     juce::ComboBox liveCycleBox;
     juce::Label liveWetL, liveCycleL, liveNote;

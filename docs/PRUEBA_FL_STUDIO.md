@@ -258,6 +258,26 @@ Selecciona una repetición, pestaña **Cortes** (Pro) o «Editor de curva…», 
 
 Límite: dentro de cada corte el ataque y la liberación se aplican hacia dentro (el corte suena exactamente entre sus bordes). En cortes más cortos que ataque + liberación, las rampas se acortan a la mitad del corte.
 
+## 17. B11: ecos en vivo (las repeticiones sobre el audio del canal del Mixer)
+
+Prepara: inserta el plugin en un canal del Mixer y manda a ese canal uno o varios clips o pistas. Pulsa **Procesar Mixer en vivo**, selecciona «Mixer en vivo» y marca **Ecos en vivo: las repeticiones también repiten esta pista**. Pon Dry/Wet en 0 % si quieres que la señal principal pase sin tocar.
+
+| # | Prueba | Resultado esperado |
+|---|---|---|
+| 17.1 | Una repetición a 1 tiempo, centro, sin efectos; reproduce | Se oye la pista y su eco 1 tiempo después; nada más (sin ecos de ecos) |
+| 17.2 | Cambia el tempo del proyecto | El eco sigue cayendo a 1 tiempo (en modo tiempo libre, se queda en sus ms) |
+| 17.3 | Corillo: 4 repeticiones a la izquierda (tiempo libre, 10/20/25/30 ms), otras 4 a la derecha | Coro ancho a cada lado; sin clics |
+| 17.4 | Mueve una repetición mientras suena | El eco cambia de sitio sin clic (fundido de 20 ms) |
+| 17.5 | Silencia o borra una repetición mientras suena | Se apaga con fundido; la cola de su reverb/delay termina sola |
+| 17.6 | Tono +12 en una repetición a 0 ms | Suena una octava arriba, unos 140 ms después (mínimo con tono o formantes) |
+| 17.7 | Stutter en una repetición (inicio, 4 repeticiones, ciclo 1 compás) | En cada compás repite el comienzo del compás |
+| 17.8 | Volume Shaper (cortes) en una repetición | El patrón de cortes se repite en cada ciclo, siguiendo al eco |
+| 17.9 | Mix al 0 % | Desaparecen los ecos (la pista sigue sonando) |
+| 17.10 | 16 repeticiones con tono, Stutter y efectos | Indica el uso de CPU de FL Studio; sin cortes de audio |
+| 17.11 | Guardar el proyecto, cerrar y abrir | «Ecos en vivo» sigue marcado y suena igual |
+
+Límites conocidos: hasta 16 repeticiones en vivo, a 8 s como máximo (las demás no suenan en vivo); con tono o formantes el eco más cercano posible es ~140 ms; el Stutter de una porción que aún no ha llegado (región «final» o «manual» con retardo corto) queda en silencio. La exportación WAV no incluye los ecos en vivo (procesa el clip importado). Medido en Linux (no en tu PC): 16 ecos con tono, Stutter y efectos ≈ 21 % de un núcleo a 48 kHz.
+
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la
   repetición ante pequeñas diferencias de posición del host) se reprodujo en

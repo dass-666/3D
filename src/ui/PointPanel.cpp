@@ -142,7 +142,7 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     liveToggle.onClick = [this] { const bool on = liveToggle.getToggleState(); ctx.edit ([on] (Scene& s) { s.live.enabled = on; }); };
     content.addChildComponent (liveToggle);
     setupSlider (liveWet, liveWetL, "Dry/Wet", 0.0, 100.0, 1.0, " %");
-    liveWet.setTooltip (u8 ("0 % = la seÃ±" "al original sin tocar Â· 100 % = solo la seÃ±" "al procesada"));
+    liveWet.setTooltip (u8 ("0 % = la se\xc3\xb1" "al original sin tocar \xc2\xb7 100 % = solo la se\xc3\xb1" "al procesada"));
     liveWet.onValueChange = [this] { const double v = liveWet.getValue(); ctx.edit ([v] (Scene& s) { s.live.wetPercent = v; }); };
     liveCycleL.setText (u8 ("Ciclo de cortes"), juce::dontSendNotification);
     liveCycleL.setFont (theme::font (12.5f));
@@ -163,8 +163,14 @@ PointPanel::PointPanel (EditorContext& c) : ctx (c)
     liveNote.setFont (theme::font (11.0f));
     liveNote.setColour (juce::Label::textColourId, theme::textDim);
     liveNote.setJustificationType (juce::Justification::topLeft);
+    liveEchoesToggle.setButtonText (u8 ("Ecos en vivo: las repeticiones tambi\xc3\xa9n repiten esta pista"));
+    liveEchoesToggle.setTooltip (u8 ("Cada repetici\xc3\xb3n activa suena sobre el audio que entra, en su momento, con su posici\xc3\xb3n, nivel, "
+                                     "filtros, cortes, Stutter, tono, formantes y efectos. Su volumen lo controla Mix."));
+    liveEchoesToggle.onClick = [this] { const bool on = liveEchoesToggle.getToggleState(); ctx.edit ([on] (Scene& s) { s.live.echoes = on; }); };
+    content.addChildComponent (liveEchoesToggle);
     liveNote.setText (u8 ("Procesa en continuo lo que entra en esta pista: filtros, cortes (en ciclo), car\xc3\xa1" "cter, modulaci\xc3\xb3n, delay, reverb y paneo. "
-                          "Pitch, formantes y Stutter no se aplican en vivo (usa \xc2\xab" "Capturar\xc2\xbb + repeticiones). Latencia: 0 muestras."),
+                          "Con \xc2\xab" "Ecos en vivo\xc2\xbb, cada repetici\xc3\xb3n repite la pista (hasta 16, a 8 s como m\xc3\xa1ximo); "
+                          "con tono o formantes un eco no puede sonar antes de unos 140 ms. Latencia: 0 muestras."),
                       juce::dontSendNotification);
     content.addChildComponent (liveNote);
 
@@ -729,6 +735,7 @@ void PointPanel::refresh()
         if (! liveWet.isMouseButtonDown())
             liveWet.setValue (live.wetPercent, juce::dontSendNotification);
         liveCycleBox.setSelectedId ((int) std::lround (live.cycleBeats * 4.0), juce::dontSendNotification);
+        liveEchoesToggle.setToggleState (live.echoes, juce::dontSendNotification);
     }
 
     int presetIndex = -1;
@@ -1016,7 +1023,8 @@ int PointPanel::layoutContent (int width)
     r.removeFromTop (2);
     labelled (liveWetL, liveWet, live);
     labelled (liveCycleL, liveCycleBox, live);
-    place (liveNote, 44, live);
+    place (liveEchoesToggle, 26, live);
+    place (liveNote, 58, live);
     labelled (presetL, presetBox, ! live);
     presetNote.setVisible (! live);
     if (! live)
