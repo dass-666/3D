@@ -301,3 +301,110 @@ TEST_CASE ("User presets: saved to a file, reloaded, favourites kept, removal, a
     }
     dir.deleteRecursively();
 }
+
+// Regression (2026-11-05): two stores over the same file (two copies of the
+// plugin, a bridged instance, another DAW) each kept their own copy of the
+// list and the last one to save erased the other's presets.
+TEST_CASE ("User presets: two stores over one file never erase each other's presets and see each other's saves")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-presets2-" + juce::String (juce::Random::getSystemRandom().nextInt (1 << 30)));
+    const auto file = dir.getChildFile ("presets.json");
+    UserPresetStore a (file), b (file);
+    REQUIRE (a.load().wasOk());
+    REQUIRE (b.load().wasOk());   // both start empty, as when two instances open
+    Point src;
+    src.shaper.enabled = true;
+    src.shaper.cuts = 12;
+    const auto idA = a.addFromPoint ("De A", "", src);
+    src.shaper.cuts = 20;
+    const auto idB = b.addFromPoint ("De B", "", src);   // b never re-read the file before
+    b.setFavourite (idB, true);
+
+    UserPresetStore fresh (file);
+    REQUIRE (fresh.load().wasOk());
+    CHECK (fresh.find (idA) != nullptr);
+    CHECK (fresh.find (idB) != nullptr);
+    CHECK (fresh.isFavourite (idB));
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("User presets: a store refreshes from disk to see another store's saves; removal keeps the others")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-presets4-" + juce::String (juce::Random::getSystemRandom().nextInt (1 << 30)));
+    const auto file = dir.getChildFile ("presets.json");
+    UserPresetStore a (file), b (file);
+    REQUIRE (a.load().wasOk());
+    REQUIRE (b.load().wasOk());
+    Point src;
+    const auto idA = a.addFromPoint ("De A", "", src);
+    const auto idB = b.addFromPoint ("De B", "", src);
+
+    // `a` sees what `b` saved when it refreshes (the «Mis presets» menu does this when it opens).
+    CHECK (a.find (idB) == nullptr);
+    CHECK (a.refreshFromDisk());
+    CHECK (a.find (idB) != nullptr);
+    CHECK_FALSE (a.refreshFromDisk());   // nothing new: no reload, no change message
+    // Removing in one store keeps the other's newer presets.
+    const auto idB2 = b.addFromPoint ("Otro de B", "", src);
+    CHECK (a.remove (idA));
+    UserPresetStore after (file);
+    REQUIRE (after.load().wasOk());
+    CHECK (after.find (idA) == nullptr);
+    CHECK (after.find (idB) != nullptr);
+    CHECK (after.find (idB2) != nullptr);
+    dir.deleteRecursively();
+}
+
+// Regression (2026-11-05): a preset that could not be written to disk was
+// reported as saved and disappeared when the DAW was restarted.
+TEST_CASE ("User presets: a failed write is reported, and every Volume Shaper and sound detail survives a reload")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-presets3-" + juce::String (juce::Random::getSystemRandom().nextInt (1 << 30)));
+    REQUIRE (dir.createDirectory());
+    {
+        const auto blocker = dir.getChildFile ("not-a-folder");
+        REQUIRE (blocker.replaceWithText ("x"));   // a file where the folder should be
+        UserPresetStore store (blocker.getChildFile ("presets.json"));
+        REQUIRE (store.load().wasOk());
+        Point p;
+        store.addFromPoint ("No cabe", "", p);
+        CHECK_FALSE (store.lastSaveOk());
+        CHECK (store.lastError.isNotEmpty());
+    }
+    const auto file = dir.getChildFile ("presets.json");
+    Point src;
+    src.sound.pitchSemitones = -3.0;
+    src.sound.formantSemitones = 4.0;
+    src.voice = { "creative.monster", "Monster", true };
+    src.shaper.enabled = true;
+    src.shaper.custom = true;
+    src.shaper.manualKind = ShaperSettings::ManualKind::Cuts;
+    src.shaper.blocks = { { 0.0, 80.0, 1.0 }, { 250.0, 300.0, 0.5 }, { 550.0, 900.0, 0.8 } };
+    src.shaper.curve = { { 0.0, 1.0 }, { 0.4, 0.2 }, { 1.0, 1.0 } };
+    src.effects.reverb.enabled = true;
+    src.effects.reverb.decayPercent = 66.0;
+    src.effects.chainOrder = "rdmc";
+    juce::String id;
+    {
+        UserPresetStore store (file);
+        id = store.addFromPoint ("Completo", "", src);
+        CHECK (store.lastSaveOk());
+    }
+    UserPresetStore reloaded (file);
+    REQUIRE (reloaded.load().wasOk());
+    const auto* up = reloaded.find (id);
+    REQUIRE (up != nullptr);
+    Point dst;
+    dst.id = "d";
+    applyUserPreset (dst, *up);
+    CHECK (dst.sound == clamped (src.sound));
+    CHECK (dst.voice == src.voice);
+    CHECK (dst.shaper == clamped (src.shaper));
+    CHECK (dst.shaper.blocks.size() == 3);
+    CHECK (dst.shaper.manualKind == ShaperSettings::ManualKind::Cuts);
+    CHECK (dst.effects == clamped (src.effects));
+    dir.deleteRecursively();
+}

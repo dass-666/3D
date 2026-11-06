@@ -286,3 +286,71 @@ TEST_CASE ("Export job: runs off the message thread, reports progress and the fi
     CHECK_FALSE (sug.exists());
     dir.deleteRecursively();
 }
+
+// Priority 7 (2026-11-05): pitch, level and effects belong to one repetition.
+// With the limiter off the output is linear in the repetitions, so the mix of
+// A and B must equal A alone plus B alone, whatever each one carries; and
+// changing A must leave B's contribution bit-identical.
+TEST_CASE ("Independence: each repetition's pitch, gain, Volume Shaper, Stutter and effect chain affect only that repetition")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const double sr = 48000.0;
+    const auto src = tone (sr, 0.5, 1);
+    Scene base;
+    base.points.clear();
+    addPoint (base, { 25.0, 40.0 }, Timing { 0.0, 0.0 });
+    addPoint (base, { 75.0, 60.0 }, Timing { 1.0, 0.0 });
+    auto& a = base.points[0];
+    a.sound.pitchSemitones = 7.0;
+    a.gainDb = -6.0;
+    a.shaper.enabled = true;
+    a.shaper.cuts = 16;
+    a.stutter.enabled = true;
+    a.stutter.repeats = 4;
+    a.effects.reverb.enabled = true;
+    a.effects.reverb.decayPercent = 80.0;
+    a.effects.character.enabled = true;
+    auto& b = base.points[1];
+    b.sound.pitchSemitones = -5.0;
+    b.gainDb = 3.0;
+    b.effects.delay.enabled = true;
+    b.effects.delay.feedbackPercent = 50.0;
+    b.effects.highpassHz = 400.0;
+
+    OfflineRenderSettings rs;
+    rs.sampleRate = sr;
+    rs.protect = false;  // linear: no limiter between the repetitions
+    rs.mixPercent = 100.0f;
+    rs.maxSeconds = 20.0;
+    auto render = [&] (const Scene& s)
+    {
+        auto r = renderOffline (s, src.get(), rs);
+        REQUIRE (r.error.isEmpty());
+        return r;
+    };
+    auto onlyA = base; onlyA.points[1].enabled = false;
+    auto onlyB = base; onlyB.points[0].enabled = false;
+    const auto both = render (base);
+    const auto ra = render (onlyA);
+    const auto rb = render (onlyB);
+    REQUIRE (ra.audio.getMagnitude (0, ra.audio.getNumSamples()) > 0.01f);
+    REQUIRE (rb.audio.getMagnitude (0, rb.audio.getNumSamples()) > 0.01f);
+    const int n = both.audio.getNumSamples();
+    auto at = [] (const OfflineRenderResult& r, int ch, int i) { return i < r.audio.getNumSamples() ? r.audio.getSample (ch, i) : 0.0f; };
+    float worst = 0.0f;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            worst = juce::jmax (worst, std::abs (both.audio.getSample (ch, i) - at (ra, ch, i) - at (rb, ch, i)));
+    CHECK (worst < 1.0e-4f);
+
+    // A completely different A (other pitch, gain, chain) leaves B untouched.
+    auto changedA = onlyB;
+    auto& a2 = changedA.points[0];
+    a2.sound.pitchSemitones = -12.0;
+    a2.gainDb = 6.0;
+    a2.effects.delay.enabled = true;
+    a2.effects.reverb.enabled = false;
+    const auto rb2 = render (changedA);
+    REQUIRE (rb2.audio.getNumSamples() == rb.audio.getNumSamples());
+    CHECK (maxDiff (rb.audio, rb2.audio, rb.audio.getNumSamples()) == 0.0f);
+}

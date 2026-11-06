@@ -925,3 +925,84 @@ TEST_CASE ("Point editing: drag in X and Y, never across neighbours, grid and fi
     CHECK (ce.lastNote().isNotEmpty());
     CHECK (ce.isCutsMode());
 }
+
+// Regression (2026-11-05): the «Guardar preset» name dialog was a separate
+// desktop window that a host keeping its plugin windows on top could hide.
+TEST_CASE ("Save preset dialog: opens inside the plugin window, has the name field, and is dismissed if the window closes")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto presetFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ses-dialog-presets.json");
+    presetFile.deleteFile();
+    UserPresetStore::overrideSharedFile (presetFile);
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 40.0, 50.0 }); });
+    // An AlertWindow measures the screen: without a display (Linux container) it cannot be built.
+    if (juce::Desktop::getInstance().getDisplays().getPrimaryDisplay() == nullptr)
+        SKIP ("no display: runs on the Windows CI");
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1080, 790);
+    presets::askNameAndSave (ed.getContext(), ed.getActionBar());
+    juce::AlertWindow* w = nullptr;
+    for (auto* c : ed.getChildren())
+        if (auto* aw = dynamic_cast<juce::AlertWindow*> (c))
+            w = aw;
+    REQUIRE (w != nullptr);
+    CHECK_FALSE (w->isOnDesktop());
+    CHECK (w->isVisible());
+    CHECK (ed.getLocalBounds().contains (w->getBounds()));
+    CHECK (w->getTextEditor ("name") != nullptr);
+    CHECK (w->isCurrentlyModal());
+    juce::Component::SafePointer<juce::AlertWindow> sw (w);
+    base.reset();  // the plugin window is closed with the dialog still open
+    CHECK ((sw == nullptr || ! sw->isCurrentlyModal()));
+    presetFile.deleteFile();
+}
+
+// Priority 5 (2026-11-05): generated cuts cannot be grabbed; dragging them in
+// the generator only selected a range. The canvas now says where to move them,
+// and in «Editar cortes» a body drag moves a cut horizontally, keeping its length.
+TEST_CASE ("Curve editor: generated cuts show how to move them; «Editar cortes» moves them horizontally with the mouse")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    SpatialEchoProcessor p;
+    p.prepareToPlay (48000.0, 512);
+    REQUIRE (p.loadSourceBytes (voiceLikeWav (48000.0), "C:/v.wav").wasOk());
+    p.editScene ([] (Scene& s) { s.points.clear(); addPoint (s, { 40.0, 50.0 }, Timing { 0.0, 0.0 }); });
+    p.setUiMode (UiMode::Pro);
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto& ed = dynamic_cast<SpatialEchoEditor&> (*base);
+    ed.setSize (1240, 840);
+    auto& ctx = ed.getContext();
+    const auto id = ctx.scene().points[0].id;
+    ctx.edit ([&] (Scene& s) { auto& sh = findPoint (s, id)->shaper; sh.enabled = true; sh.cuts = 4; sh.depthPercent = 100.0; });
+    ctx.select (id, false);
+    auto& ce = ed.getCurveEditor();
+    ed.showCurveEditor (true);
+    CHECK (ce.modeHint().contains ("Editar cortes"));
+
+    // A drag over a generated cut only selects time: the cuts stay where they are.
+    const auto shaperBefore = *ce.current();
+    const float yMid = ce.canvasArea().getCentreY();
+    drag (ce, { ce.xForMs (60.0), yMid }, { ce.xForMs (200.0), yMid });
+    CHECK (*ce.current() == shaperBefore);
+    CHECK (ce.currentSelection().has_value());
+
+    ce.setCutsMode (true);
+    CHECK (ce.modeHint().isEmpty());
+    REQUIRE (ce.numBlocks() == 4);
+    const auto b1 = ce.current()->blocks[1];
+    const double pxMs = ce.spanMs() / ce.canvasArea().getWidth();
+    const float bx = ce.xForMs ((b1.startMs + b1.endMs) * 0.5);
+    drag (ce, { bx, yMid + 40.0f }, { ce.xForMs ((b1.startMs + b1.endMs) * 0.5 + 50.0), yMid + 40.0f });
+    const auto moved = ce.current()->blocks[1];
+    CHECK_THAT (moved.startMs - b1.startMs, Catch::Matchers::WithinAbs (50.0, 2.0 * pxMs));
+    CHECK_THAT (moved.endMs - moved.startMs, Catch::Matchers::WithinAbs (b1.endMs - b1.startMs, 1e-6));
+    CHECK (moved.level == b1.level);
+    // Leftwards too, never over the previous cut.
+    drag (ce, { ce.xForMs ((moved.startMs + moved.endMs) * 0.5), yMid + 40.0f }, { ce.xForMs (0.0), yMid + 40.0f });
+    CHECK (ce.current()->blocks[1].startMs >= ce.current()->blocks[0].endMs - 1e-9);
+    CHECK (ce.current()->blocks[1].startMs < moved.startMs);
+}

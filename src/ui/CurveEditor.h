@@ -48,6 +48,8 @@ public:
     bool cutsToPoints();                   // false (and a note) if it does not fit in the point limit
     void redetectCuts();
     juce::String lastNote() const { return note; }
+    // Shown over the canvas while the generator drives the curve (empty otherwise).
+    juce::String modeHint() const;
 
     // ---- cut blocks (ms from the start of the shaped span) --------------
     int numBlocks() const;

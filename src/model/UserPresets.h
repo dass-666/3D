@@ -41,6 +41,11 @@ public:
     explicit UserPresetStore (juce::File = {});  // empty = in memory only (tests)
     juce::Result load();
     juce::Result save() const;
+    // Re-reads the file if another store (another copy of the plugin, a bridged
+    // instance, another host) changed it since this one last read or wrote it.
+    // True if the list changed. Every edit below does this first, so an edit
+    // never erases presets saved elsewhere meanwhile.
+    bool refreshFromDisk();
 
     const std::vector<UserPointPreset>& presets() const noexcept { return data.presets; }
     const UserPointPreset* find (const juce::String& id) const;
@@ -54,13 +59,18 @@ public:
     const juce::StringArray& favourites() const noexcept { return data.favourites; }
 
     juce::String lastError;
+    // False if the last edit could not be written: the preset exists only until the host closes.
+    bool lastSaveOk() const noexcept { return saveOk; }
     bool loadFailed() const noexcept { return loadBroken; }  // the file could not be read: saving is refused so it is not overwritten
 
 private:
     void changed();
+    juce::Result readFile (bool notify);
     juce::File file;
     UserPresetFile data;
     bool loadBroken = false;
+    bool saveOk = true;
+    mutable juce::String diskText;  // what this store last read from or wrote to the file
 };
 
 } // namespace ses

@@ -42,6 +42,8 @@ void UserPresetStore::overrideSharedFile (const juce::File& f)
         s.file = f;
         s.data = {};
         s.loadBroken = false;
+        s.saveOk = true;
+        s.diskText.clear();
         s.load();
         s.sendChangeMessage();
     }
@@ -64,9 +66,15 @@ UserPresetStore::UserPresetStore (juce::File f) : file (std::move (f)) {}
 
 juce::Result UserPresetStore::load()
 {
+    return readFile (true);
+}
+
+juce::Result UserPresetStore::readFile (bool notify)
+{
     if (file == juce::File() || ! file.existsAsFile())
         return juce::Result::ok();
-    auto r = userPresetsFromJson (file.loadFileAsString());
+    const auto text = file.loadFileAsString();
+    auto r = userPresetsFromJson (text);
     if (! r)
     {
         // Keep the user's file: a copy next to it, and no saving until a load works.
@@ -76,9 +84,27 @@ juce::Result UserPresetStore::load()
         return juce::Result::fail (r.error);
     }
     loadBroken = false;
+    diskText = text;
     data = std::move (*r.value);
-    sendChangeMessage();
+    if (notify)
+        sendChangeMessage();
     return juce::Result::ok();
+}
+
+bool UserPresetStore::refreshFromDisk()
+{
+    if (file == juce::File() || ! file.existsAsFile())
+        return false;
+    const auto text = file.loadFileAsString();
+    if (text == diskText && ! loadBroken)
+        return false;
+    const auto before = data;
+    if (readFile (false).failed())
+        return false;
+    if (data == before)
+        return false;
+    sendChangeMessage();
+    return true;
 }
 
 juce::Result UserPresetStore::save() const
@@ -88,9 +114,11 @@ juce::Result UserPresetStore::save() const
     if (loadBroken)
         return juce::Result::fail ("El archivo de presets no se pudo leer; no se sobrescribe (" + lastError + ")");
     if (! file.getParentDirectory().createDirectory())
-        return juce::Result::fail ("No se pudo crear " + file.getParentDirectory().getFullPathName());
-    if (! file.replaceWithText (userPresetsToJson (data)))
+        return juce::Result::fail ("No se pudo crear la carpeta " + file.getParentDirectory().getFullPathName());
+    const auto text = userPresetsToJson (data);
+    if (! file.replaceWithText (text))
         return juce::Result::fail ("No se pudo escribir " + file.getFullPathName());
+    diskText = file.loadFileAsString();  // as stored (line endings may differ)
     return juce::Result::ok();
 }
 
@@ -104,6 +132,7 @@ const UserPointPreset* UserPresetStore::find (const juce::String& id) const
 
 juce::String UserPresetStore::upsert (UserPointPreset preset)
 {
+    refreshFromDisk();
     if (preset.id.isEmpty())
         preset.id = "user." + makeId();
     if (preset.name.trim().isEmpty())
@@ -137,17 +166,24 @@ juce::String UserPresetStore::addFromPoint (const juce::String& name, const juce
 
 bool UserPresetStore::remove (const juce::String& id)
 {
+    refreshFromDisk();
     const auto before = data.presets.size();
     data.presets.erase (std::remove_if (data.presets.begin(), data.presets.end(), [&] (auto& p) { return p.id == id; }), data.presets.end());
+    const bool wasFavourite = data.favourites.contains (id);
     data.favourites.removeString (id);
     if (data.presets.size() == before)
+    {
+        if (wasFavourite)
+            changed();
         return false;
+    }
     changed();
     return true;
 }
 
 void UserPresetStore::setFavourite (const juce::String& id, bool on)
 {
+    refreshFromDisk();
     if (on == data.favourites.contains (id))
         return;
     if (on)
@@ -159,7 +195,9 @@ void UserPresetStore::setFavourite (const juce::String& id, bool on)
 
 void UserPresetStore::changed()
 {
-    if (auto r = save(); r.failed())
+    auto r = save();
+    saveOk = r.wasOk();
+    if (r.failed())
         lastError = r.getErrorMessage();
     sendChangeMessage();
 }

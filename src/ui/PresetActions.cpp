@@ -7,6 +7,20 @@ namespace ses::presets
 namespace
 {
 juce::String u8 (const char* s) { return juce::String::fromUTF8 (s); }
+
+// A dialog shown inside the plugin window is dismissed (Cancel) if that window
+// is closed first, so it never stays modal and invisible, blocking the next one.
+struct DismissWithParent final : juce::ComponentListener
+{
+    juce::Component::SafePointer<juce::Component> dialog;
+    void componentBeingDeleted (juce::Component& c) override
+    {
+        c.removeComponentListener (this);
+        if (dialog != nullptr)
+            dialog->exitModalState (0);
+        delete this;
+    }
+};
 }
 
 std::vector<Entry> all()
@@ -61,7 +75,8 @@ juce::String saveFromSelection (EditorContext& ctx, const juce::String& name)
     auto& store = UserPresetStore::shared();
     const auto pointId = p->id;
     const auto id = store.addFromPoint (name.isEmpty() ? u8 ("Mi preset") : name, u8 ("Preset propio"), *p);
-    if (id.isEmpty() || store.find (id) == nullptr)
+    // Not written to disk = it would vanish when the host closes: report it as a failure.
+    if (id.isEmpty() || store.find (id) == nullptr || ! store.lastSaveOk())
         return {};
     ctx.edit ([&] (Scene& s) { if (auto* q = findPoint (s, pointId)) q->creativePreset = id; });
     return id;
@@ -86,6 +101,17 @@ void askNameAndSave (EditorContext& ctx, juce::Component& parent, std::function<
     w->addTextEditor ("name", u8 ("Mi preset"), u8 ("Nombre"));
     w->addButton ("Guardar", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    // Inside the plugin window, not a separate desktop window: some hosts keep
+    // their plugin windows on top, which can hide a separate dialog behind them
+    // (the «Guardar preset» click then seems to do nothing).
+    if (auto* top = parent.getTopLevelComponent())
+    {
+        top->addAndMakeVisible (w);
+        w->setCentrePosition (top->getLocalBounds().getCentre());
+        auto* guard = new DismissWithParent();
+        guard->dialog = w;
+        top->addComponentListener (guard);
+    }
     // The callback runs before the window is deleted (deleteWhenDismissed).
     w->enterModalState (true, juce::ModalCallbackFunction::create ([&ctx, w, done, alive = juce::Component::SafePointer<juce::Component> (&parent)] (int r)
     {
@@ -102,6 +128,7 @@ void askNameAndSave (EditorContext& ctx, juce::Component& parent, std::function<
 juce::PopupMenu buildMenu (EditorContext& ctx, juce::Component& parent, std::function<void (const juce::String&)> onNote)
 {
     auto& store = UserPresetStore::shared();
+    store.refreshFromDisk();  // presets saved meanwhile by another copy of the plugin
     const auto list = all();
     const auto* p = sourcePoint (ctx);
     const auto current = p != nullptr ? p->creativePreset : juce::String();

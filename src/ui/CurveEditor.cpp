@@ -1180,8 +1180,29 @@ void CurveEditor::paint (juce::Graphics& g)
         g.drawText (juce::String (ms, 1) + " ms", juce::Rectangle<float> (x + 3.0f, ruler.getY() + 2.0f, 70.0f, 12.0f), juce::Justification::left);
     }
 
+    if (const auto hint = modeHint(); hint.isNotEmpty())
+    {
+        g.setFont (theme::font (11.0f, false));
+        const float tw = (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), hint) + 14.0f;
+        const auto hb = juce::Rectangle<float> (c.getX() + 6.0f, c.getBottom() - 22.0f, juce::jmin (tw, c.getWidth() - 12.0f), 16.0f);
+        g.setColour (theme::background.withAlpha (0.8f));
+        g.fillRoundedRectangle (hb, 3.0f);
+        g.setColour (theme::text.withAlpha (0.85f));
+        g.drawFittedText (hint, hb.toNearestInt().reduced (6, 0), juce::Justification::centredLeft, 1);
+    }
+
     g.setColour (theme::outline);
     g.drawRoundedRectangle (c.expanded (0.0f, kRulerHeight).withY (ruler.getY()), 6.0f, 1.0f);
+}
+
+juce::String CurveEditor::modeHint() const
+{
+    // Generated cuts are not objects the mouse can grab: say where that is done
+    // (a drag here only selects a time range).
+    const auto* sh = current();
+    if (sh == nullptr || ! sh->enabled || sh->custom)
+        return {};
+    return u8 ("Cortes generados: para moverlos con el mouse pulsa \xc2\xab" "Editar cortes\xc2\xbb. Arrastrar aqu\xc3\xad selecciona un tramo.");
 }
 
 void CurveEditor::resized()
