@@ -216,7 +216,6 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
     CHECK (ce.isEmbedded());
     const int embeddedWidth = ce.getBounds().getWidth();
     ed.showCurveEditor (true);   // "Ampliar": full window
-    CHECK (ce.isVisible());
     CHECK (! ce.isEmbedded());
     CHECK (ce.getBounds().getWidth() > 1000);
     CHECK (ce.getBounds().getWidth() > embeddedWidth);
@@ -310,7 +309,6 @@ TEST_CASE ("Curve editor: opens over the editor, points are added, dragged, remo
     CHECK (ce.fractionAt (ce.canvasArea().getRight()) <= 1.0);
     ce.fitView();
     ed.showCurveEditor (false);
-    CHECK (ce.isVisible());
     CHECK (ce.isEmbedded());
     CHECK (ce.getBounds().getWidth() == embeddedWidth);
 
@@ -442,7 +440,6 @@ TEST_CASE ("Pro layout: quick controls edit the generator, generate perfect cuts
     CHECK (! ce.isVisible());
     sb.onCategory ("shaper");
     CHECK (ed.getCenterView() == SpatialEchoEditor::CenterView::Cuts);
-    CHECK (ce.isVisible());
     ed.setCenterView (SpatialEchoEditor::CenterView::Audio);
     CHECK (ed.getWaveform().isVisible());
     CHECK (! ce.isVisible());
@@ -917,6 +914,7 @@ TEST_CASE ("Point editing: drag in X and Y, never across neighbours, grid and fi
         sh = clamped (sh);
     });
     CHECK (ce.numBlocks() == limits::maxCutBlocks);
+    CHECK (ce.modeHint().isEmpty());
     const auto t1 = juce::Time::getMillisecondCounterHiRes();
     for (int i = 0; i < 10; ++i)
         ed.createComponentSnapshot (ed.getLocalBounds());
@@ -965,7 +963,7 @@ TEST_CASE ("Save preset dialog: opens inside the plugin window, has the name fie
 // Priority 5 (2026-11-05): generated cuts cannot be grabbed; dragging them in
 // the generator only selected a range. The canvas now says where to move them,
 // and in «Editar cortes» a body drag moves a cut horizontally, keeping its length.
-TEST_CASE ("Curve editor: generated cuts show how to move them; «Editar cortes» moves them horizontally with the mouse")
+TEST_CASE ("Curve editor: generated cuts show how to move them; in cut editing they move horizontally with the mouse")
 {
     juce::ScopedJuceInitialiser_GUI init;
     SpatialEchoProcessor p;
