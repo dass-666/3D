@@ -76,6 +76,7 @@ Archivos de este paquete
 - GUIA_DE_USO.md                guia para empezar + pruebas de 15-20 minutos
 - FUNCIONES_Y_LIMITACIONES.md   que hace y que no hace esta beta
 - REPORTE_DE_ERRORES.md         plantilla para enviar resultados y fallos
+- VALIDACION_PENDIENTE.md       pruebas de oido y vista de los cambios recientes
 - VERSION.txt                   version, commit y pruebas realizadas
 
 Los archivos .md se pueden abrir con el Bloc de notas.

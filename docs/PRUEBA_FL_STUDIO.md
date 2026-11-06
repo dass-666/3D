@@ -278,6 +278,10 @@ Prepara: inserta el plugin en un canal del Mixer y manda a ese canal uno o vario
 
 Límites conocidos: hasta 16 repeticiones en vivo, a 8 s como máximo (las demás no suenan en vivo); con tono o formantes el eco más cercano posible es ~140 ms; el Stutter de una porción que aún no ha llegado (región «final» o «manual» con retardo corto) queda en silencio. La exportación WAV no incluye los ecos en vivo (procesa el clip importado). Medido en Linux (no en tu PC): 16 ecos con tono, Stutter y efectos ≈ 21 % de un núcleo a 48 kHz.
 
+## 18. Presets propios corregidos y validación pendiente (2026-11-06)
+
+Sigue **beta/VALIDACION_PENDIENTE.md** (también va dentro del paquete beta): A presets propios con dos copias del plugin y reinicio de FL Studio; B mover cortes con el mouse; C rejilla, ms y Volume Shaper; D independencia por repetición; E sincronía y efectos; F guardado; G estabilidad.
+
 ## Hipótesis abiertas (sin confirmar en FL Studio)
 - Sincronización/BPM: la causa encontrada (umbral de 1e-3 beats que cancelaba la
   repetición ante pequeñas diferencias de posición del host) se reprodujo en

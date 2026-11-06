@@ -45,7 +45,7 @@ jobs:
           $pkg = "SpatialEchoStudio-Beta-Windows-x64"
           New-Item -ItemType Directory -Force $pkg | Out-Null
           Copy-Item -Recurse "build/SpatialEchoStudio_artefacts/Release/VST3/Spatial Echo Studio.vst3" $pkg
-          Copy-Item beta/README_INSTALACION.txt, beta/GUIA_DE_USO.md, beta/FUNCIONES_Y_LIMITACIONES.md, beta/REPORTE_DE_ERRORES.md $pkg
+          Copy-Item beta/README_INSTALACION.txt, beta/GUIA_DE_USO.md, beta/FUNCIONES_Y_LIMITACIONES.md, beta/REPORTE_DE_ERRORES.md, beta/VALIDACION_PENDIENTE.md $pkg
           $binary = "$pkg/Spatial Echo Studio.vst3/Contents/x86_64-win/Spatial Echo Studio.vst3"
           if (-not (Test-Path $binary)) { throw "VST3 binary missing: $binary" }
           $hash = (Get-FileHash $binary -Algorithm SHA256).Hash

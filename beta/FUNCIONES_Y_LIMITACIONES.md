@@ -29,6 +29,14 @@ Esta es una **beta de prueba**. «Validado en FL Studio» significa que el autor
 | Procesar Mixer en vivo | Filtros, cortes, efectos y paneo sobre el audio del canal; sin pitch, formantes ni Stutter sobre la señal principal |
 | Ecos en vivo | Las repeticiones repiten el audio del canal. Hasta 16 ecos, máximo 8 s. Con tono o formantes el eco más cercano posible es ~140 ms |
 
+## Cambios de esta versión (pendientes de validar en FL Studio)
+
+- **Presets propios**: dos copias del plugin (otro canal, una versión anterior instalada, un plugin «puenteado») ya no se borran los presets entre sí; «Mis presets» muestra al abrirse los guardados desde otra copia; si el archivo de presets no se puede escribir, el plugin lo dice en vez de anunciar «guardado»; la ventana para escribir el nombre se abre dentro de la ventana del plugin.
+- **Editor de cortes**: con los cortes generados, el editor indica que para moverlos con el mouse hay que pulsar «Editar cortes».
+- Un preset propio guarda sonido, pitch/formantes, cortes y efectos; **no guarda el Stutter** (igual que los presets integrados).
+
+Guía de comprobación: **VALIDACION_PENDIENTE.md**.
+
 ## No disponible en esta beta
 
 - Capas vocales y armonización.
