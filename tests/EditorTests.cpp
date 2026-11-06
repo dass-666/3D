@@ -164,7 +164,8 @@ TEST_CASE ("Editor interactions: drag on the map pans, drag on the timeline move
     const auto from = map.screenPositionOf (ctx.scene().points[1].position);
     const auto to = map.screenPositionOf ({ 10.0, 49.0 });
     dragGesture (map, from, to);
-    const auto* moved = findPoint (p.getSceneForUi(), id2);
+    const auto sceneAfterDrag = p.getSceneForUi();  // a copy: keep it alive while `moved` is used
+    const auto* moved = findPoint (sceneAfterDrag, id2);
     REQUIRE (moved != nullptr);
     CHECK (std::abs (moved->position.x - 10.0) < 1.0);
     CHECK (ctx.primary() == id2);
