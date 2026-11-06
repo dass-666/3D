@@ -39,6 +39,41 @@ jobs:
           name: SpatialEchoStudio-VST3-Windows-x64
           path: build/SpatialEchoStudio_artefacts/Release/VST3/
 
+      - name: Assemble beta package
+        shell: pwsh
+        run: |
+          $pkg = "SpatialEchoStudio-Beta-Windows-x64"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item -Recurse "build/SpatialEchoStudio_artefacts/Release/VST3/Spatial Echo Studio.vst3" $pkg
+          Copy-Item beta/README_INSTALACION.txt, beta/GUIA_DE_USO.md, beta/FUNCIONES_Y_LIMITACIONES.md, beta/REPORTE_DE_ERRORES.md, beta/VALIDACION_PENDIENTE.md $pkg
+          $binary = "$pkg/Spatial Echo Studio.vst3/Contents/x86_64-win/Spatial Echo Studio.vst3"
+          if (-not (Test-Path $binary)) { throw "VST3 binary missing: $binary" }
+          $hash = (Get-FileHash $binary -Algorithm SHA256).Hash
+          $size = (Get-Item $binary).Length
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
+          @(
+            "Spatial Echo Studio - BETA de prueba (Windows x64, VST3)"
+            "Version del proyecto: ${{ github.ref_name }} / 0.1.0"
+            "Commit: $env:GITHUB_SHA"
+            "Fecha de compilacion: $date"
+            "Compilacion: Release x64, MSVC, GitHub Actions run $env:GITHUB_RUN_ID"
+            "Binario: Contents/x86_64-win/Spatial Echo Studio.vst3 ($size bytes)"
+            "SHA-256 del binario: $hash"
+            ""
+            "Pruebas superadas en esta compilacion (si alguna fallara, este paquete no existiria):"
+            "- Pruebas automaticas (ctest, Windows Release): todas superadas"
+            "- pluginval $env:PLUGINVAL_VERSION, nivel de exigencia 10, sin pruebas de interfaz: superado"
+            ""
+            "Pruebas manuales: ver FUNCIONES_Y_LIMITACIONES.md. Solo el autor ha probado"
+            "el plugin en FL Studio; esta es la primera prueba en otro equipo."
+          ) | Set-Content -Encoding utf8 "$pkg/VERSION.txt"
+
+      - name: Upload beta package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpatialEchoStudio-Beta-Windows-x64
+          path: SpatialEchoStudio-Beta-Windows-x64/
+
       - name: Upload pluginval logs
         if: always()
         uses: actions/upload-artifact@v4
