@@ -270,7 +270,7 @@ TEST_CASE ("User presets: saved to a file, reloaded, favourites kept, removal, a
         UserPresetStore store (file);
         REQUIRE (store.load().wasOk());
         REQUIRE (store.presets().size() == 1);
-        const auto& p = store.presets()[0];
+        const auto p = store.presets()[0];  // a copy: remove() below frees the stored one
         CHECK (p.name == "Mi corte");
         CHECK (p.content.shaper.cuts == 24);
         CHECK_THAT (p.content.shaper.accelPercent, Catch::Matchers::WithinAbs (30.0, 1e-9));

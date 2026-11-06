@@ -164,8 +164,10 @@ juce::String UserPresetStore::addFromPoint (const juce::String& name, const juce
     return upsert (std::move (p));
 }
 
-bool UserPresetStore::remove (const juce::String& id)
+bool UserPresetStore::remove (const juce::String& idRef)
 {
+    // A copy: callers may pass presets()[i].id, which the erase (or the refresh) frees.
+    const juce::String id = idRef;
     refreshFromDisk();
     const auto before = data.presets.size();
     data.presets.erase (std::remove_if (data.presets.begin(), data.presets.end(), [&] (auto& p) { return p.id == id; }), data.presets.end());
@@ -181,8 +183,9 @@ bool UserPresetStore::remove (const juce::String& id)
     return true;
 }
 
-void UserPresetStore::setFavourite (const juce::String& id, bool on)
+void UserPresetStore::setFavourite (const juce::String& idRef, bool on)
 {
+    const juce::String id = idRef;  // may point into `data`, which the refresh replaces
     refreshFromDisk();
     if (on == data.favourites.contains (id))
         return;
